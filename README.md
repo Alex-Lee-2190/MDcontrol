@@ -19,9 +19,7 @@
 
 ## Display
 
-<p align="center">
-  <video src="./README/Media/Video/Display.mp4" width="100%" controls="controls"></video>
-</p>
+https://github-production-user-asset-6210df.s3.amazonaws.com/218673146/565673527-fac31367-0ff6-4632-a68a-d20027a8698d.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20260318%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260318T161349Z&X-Amz-Expires=300&X-Amz-Signature=744978fe67047df54d77666b474af74c481411ddd79a99bf83c1732a44b96543&X-Amz-SignedHeaders=host
 
 > *注意： Alpha 版本多被控设备下的文件传输功能尚未完善*
 

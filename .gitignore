@@ -1,15 +1,17 @@
-# Build and binary directories
+# Build and release directories
 /build/
-/build_release/
 /Relaease/
-/Debug/
 /Release/
+/release/
 
 # IDE specific
 /.vscode/
 *.pro.user*
 
-# Compiled files
+# Test and temporary directories
+/elsetest/
+
+# Compiled files and binaries
 *.o
 *.obj
 *.exe
@@ -23,9 +25,7 @@
 Makefile
 CMakeCache.txt
 CMakeFiles/
-hash_test_autogen/
-MDControl_autogen/
+*_autogen/
 
 # Logs
 *.log
-/build/log/

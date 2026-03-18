@@ -1,0 +1,31 @@
+# Build and binary directories
+/build/
+/build_release/
+/Relaease/
+/Debug/
+/Release/
+
+# IDE specific
+/.vscode/
+*.pro.user*
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.a
+*.so
+*.lib
+*.dll
+*.zip
+
+# Generated files
+Makefile
+CMakeCache.txt
+CMakeFiles/
+hash_test_autogen/
+MDControl_autogen/
+
+# Logs
+*.log
+/build/log/

@@ -25,8 +25,7 @@
 #include <QtWidgets/QStyledItemDelegate>
 #include "Common.h" 
 #include "KvmEvents.h"
-
-QString T(const QString& zh);
+#include "Translation.h"
 
 struct ConflictItem {
     int idx;

@@ -10,14 +10,14 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Gui Widgets Svg)
 
-# 包含路径
+# Include paths
 include_directories(
     src/core
     src/ui
     src/network
 )
 
-# 平台无关源文件
+# Platform-independent source files
 set(SOURCES
     src/main.cpp
     src/core/InputCore.cpp
@@ -28,6 +28,7 @@ set(SOURCES
     src/ui/SpeedGraphWidget.cpp
     src/ui/IconDrawer.cpp
     src/ui/Overlay.cpp
+    src/ui/Translation.cpp
     src/network/Master/MasterInput.cpp
     src/network/Master/MasterClipboard.cpp
     src/network/Master/MasterFileTransfer.cpp
@@ -37,12 +38,10 @@ set(SOURCES
     src/network/Slave/SlaveConnection.cpp
 )
 
-# 平台特定源文件和设置
+# Platform-specific source files and settings
 if(WIN32)
     include_directories(src/platform/windows)
     
-    # [New] 生成并编译资源文件以设置 exe 的文件图标
-    # 要求在项目根目录（CMakeLists.txt同级）存在 app.ico 文件
     set(APP_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc")
     file(WRITE "${APP_ICON_RC}" "IDI_ICON1 ICON \"${CMAKE_CURRENT_SOURCE_DIR}/app.ico\"\n")
 
@@ -55,13 +54,13 @@ if(WIN32)
         src/platform/windows/WinBluetooth.cpp
         src/platform/windows/WinFileLockMgr.cpp
         src/platform/windows/WinCryptoMgr.cpp
-        ${APP_ICON_RC} # [New] 将资源文件加入编译链
+        ${APP_ICON_RC}
     )
 endif()
 
 add_executable(MDControl ${SOURCES})
 
-# 链接库
+# Link libraries
 target_link_libraries(MDControl PRIVATE Qt6::Gui Qt6::Widgets Qt6::Svg)
 
 if(WIN32)
@@ -79,14 +78,12 @@ if(WIN32)
         advapi32
         crypt32
     )
-    # 针对 Windows 子系统的设置 (避免弹出控制台，如需调试可注释掉)
     set_target_properties(MDControl PROPERTIES WIN32_EXECUTABLE ON)
 endif()
 
-# 新增：独立哈希抽样测试程序
+# Independent hash sampling test program
 add_executable(hash_test test/hash_test.cpp)
 if(WIN32)
     target_link_libraries(hash_test PRIVATE ws2_32)
-    # 隐藏独立验证程序的控制台
     set_target_properties(hash_test PROPERTIES WIN32_EXECUTABLE ON)
 endif()

@@ -1,15 +1,13 @@
 # Build and release directories
 /build/
-/Relaease/
 /Release/
-/release/
 
 # IDE specific
 /.vscode/
 *.pro.user*
 
 # Test and temporary directories
-/elsetest/
+/Else/
 
 # Compiled files and binaries
 *.o

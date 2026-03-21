@@ -11,6 +11,8 @@ public:
     WinBluetoothMgr();
     virtual ~WinBluetoothMgr();
 
+    bool IsAvailable() override;
+
     void StartScan(std::function<void(const BluetoothDevice&)> onDeviceFound, std::function<void(const std::string&)> onFinished) override;
     void StopScan() override;
     

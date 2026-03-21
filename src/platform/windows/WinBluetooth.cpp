@@ -12,6 +12,21 @@ DEFINE_GUID(g_ServiceUuid, 0xb62c4e8d, 0x62a8, 0x4547, 0xa4, 0x33, 0xf3, 0x51, 0
 WinBluetoothMgr::WinBluetoothMgr() : m_scanning(false), m_listeningSocket((unsigned long long)INVALID_SOCKET) {}
 WinBluetoothMgr::~WinBluetoothMgr() { StopScan(); }
 
+bool WinBluetoothMgr::IsAvailable() {
+    SOCKET s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
+    if (s == INVALID_SOCKET) return false;
+    
+    SOCKADDR_BTH sa = { 0 };
+    sa.addressFamily = AF_BTH;
+    sa.port = 0;
+    if (bind(s, (SOCKADDR*)&sa, sizeof(sa)) != 0) {
+        closesocket(s);
+        return false;
+    }
+    closesocket(s);
+    return true;
+}
+
 void WinBluetoothMgr::StartScan(std::function<void(const BluetoothDevice&)> onDeviceFound, std::function<void(const std::string&)> onFinished) {
     if (m_scanning) return;
     m_scanning = true;

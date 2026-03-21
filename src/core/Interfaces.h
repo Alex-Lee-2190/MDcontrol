@@ -48,6 +48,8 @@ public:
 class IBluetoothMgr {
 public:
     virtual ~IBluetoothMgr() = default;
+
+    virtual bool IsAvailable() = 0;
     
     // Master scan
     virtual void StartScan(std::function<void(const BluetoothDevice&)> onDeviceFound, std::function<void(const std::string&)> onFinished) = 0;

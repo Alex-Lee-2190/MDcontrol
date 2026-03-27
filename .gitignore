@@ -7,7 +7,7 @@
 *.pro.user*
 
 # Test and temporary directories
-/Else/
+/ELSE/
 
 # Compiled files and binaries
 *.o

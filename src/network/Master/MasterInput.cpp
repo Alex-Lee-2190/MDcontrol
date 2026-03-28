@@ -3,6 +3,7 @@
 #include "KvmContext.h"
 #include <vector>
 #include <chrono>
+#include <map>
 
 std::queue<InputPkt> g_InputQueue;
 std::mutex g_InputQueueLock;
@@ -14,6 +15,10 @@ void SenderThread() {
         
         int last_active = -99;
         bool last_locked = false;
+        int last_tx = -1;
+        int last_ty = -1;
+        int last_px = -1;
+        int last_py = -1;
 
         while (g_Running) {
             uint32_t now = SystemUtils::GetTimeMS();
@@ -25,12 +30,16 @@ void SenderThread() {
             SystemUtils::GetCursorPos(px, py);
             bool locked = g_Locked.load();
 
-            // Filter out high-frequency mouse movement noise, only broadcast focus switch and lock events
-            bool displayChanged = (active != last_active || locked != last_locked);
+            // Broadcast focus switch, lock events, and real-time mouse positions (approx. 30fps)
+            bool displayChanged = (active != last_active || locked != last_locked || curTx != last_tx || curTy != last_ty || px != last_px || py != last_py);
 
             if (displayChanged) { 
                 last_active = active;
                 last_locked = locked;
+                last_tx = curTx;
+                last_ty = curTy;
+                last_px = px;
+                last_py = py;
 
                 unsigned int nActive = htonl(active);
                 unsigned int nTx = htonl(curTx);
@@ -140,7 +149,7 @@ void SenderThread() {
                 }
             }
             
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(33));
         }
     }).detach();
 
@@ -168,27 +177,49 @@ void SenderThread() {
         }
 
         if (sendPos || !eventsToSend.empty()) {
-            std::shared_ptr<SlaveCtx> ctx;
-            {
-                std::lock_guard<std::mutex> lk(g_SlaveListLock);
-                int idx = g_ActiveSlaveIdx.load();
-                if (idx >= 0 && idx < (int)g_SlaveList.size()) ctx = g_SlaveList[idx];
+            if (sendPos) {
+                std::shared_ptr<SlaveCtx> ctx;
+                {
+                    std::lock_guard<std::mutex> lk(g_SlaveListLock);
+                    int idx = g_ActiveSlaveIdx.load();
+                    if (idx >= 0 && idx < (int)g_SlaveList.size()) ctx = g_SlaveList[idx];
+                }
+
+                if (ctx && ctx->sock != INVALID_SOCKET_HANDLE) {
+                    unsigned int nx = htonl(tx), ny = htonl(ty);
+                    memcpy(posBuffer + 1, &nx, 4); memcpy(posBuffer + 5, &ny, 4);
+                    std::lock_guard<std::mutex> netLock(ctx->sendLock);
+                    if (!NetUtils::SendAll(ctx->sock, posBuffer, 9)) {
+                        ctx->connected = false;
+                    }
+                }
             }
 
-            if (ctx && ctx->sock != INVALID_SOCKET_HANDLE) {
-                std::vector<char> batch;
-                if (sendPos) {
-                     unsigned int nx = htonl(tx), ny = htonl(ty);
-                     memcpy(posBuffer + 1, &nx, 4); memcpy(posBuffer + 5, &ny, 4);
-                     batch.insert(batch.end(), posBuffer, posBuffer + 9);
-                }
+            if (!eventsToSend.empty()) {
+                std::map<int, std::vector<char>> routedBatches;
                 for (const auto& pkt : eventsToSend) {
-                    batch.insert(batch.end(), pkt.data, pkt.data + pkt.len);
+                    int tIdx = pkt.targetIdx;
+                    if (tIdx < 0) {
+                        tIdx = g_ActiveSlaveIdx.load();
+                    }
+                    if (tIdx >= 0) {
+                        routedBatches[tIdx].insert(routedBatches[tIdx].end(), pkt.data, pkt.data + pkt.len);
+                    }
                 }
-                
-                std::lock_guard<std::mutex> netLock(ctx->sendLock);
-                if (!NetUtils::SendAll(ctx->sock, batch.data(), batch.size())) {
-                    ctx->connected = false;
+
+                if (!routedBatches.empty()) {
+                    std::lock_guard<std::mutex> lk(g_SlaveListLock);
+                    for (auto const& [tIdx, batch] : routedBatches) {
+                        if (tIdx < (int)g_SlaveList.size()) {
+                            auto& ctx = g_SlaveList[tIdx];
+                            if (ctx && ctx->sock != INVALID_SOCKET_HANDLE) {
+                                std::lock_guard<std::mutex> netLock(ctx->sendLock);
+                                if (!NetUtils::SendAll(ctx->sock, batch.data(), batch.size())) {
+                                    ctx->connected = false;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

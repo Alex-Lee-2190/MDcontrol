@@ -96,6 +96,48 @@ struct FileTransferTask {
     std::atomic<uint32_t> lastActiveTime{0};
     std::atomic<uint64_t> currentFileRecvSize{0};
     std::atomic<bool> errorPrompting{false}; 
+
+    // I/O Decoupling & Backpressure mechanism
+    std::mutex diskMutex;
+    std::condition_variable diskCv;
+    std::queue<std::function<void()>> diskQueue;
+    std::atomic<uint64_t> pendingDiskBytes{0};
+    std::atomic<bool> diskThreadActive{false};
+
+    ~FileTransferTask() {
+        stopDiskThread();
+    }
+
+    void enqueueDiskTask(int bytes, std::function<void()> taskFunc) {
+        {
+            std::lock_guard<std::mutex> lock(diskMutex);
+            diskQueue.push(taskFunc);
+            pendingDiskBytes += bytes;
+        }
+        diskCv.notify_one();
+    }
+
+    void startDiskThread() {
+        if (diskThreadActive.exchange(true)) return;
+        std::thread([this]() {
+            while (diskThreadActive) {
+                std::function<void()> t;
+                {
+                    std::unique_lock<std::mutex> lock(diskMutex);
+                    diskCv.wait(lock, [this] { return !diskQueue.empty() || !diskThreadActive || cancelled.load(); });
+                    if (cancelled.load() || (!diskThreadActive && diskQueue.empty())) break;
+                    t = diskQueue.front();
+                    diskQueue.pop();
+                }
+                if (t) t();
+            }
+        }).detach();
+    }
+
+    void stopDiskThread() {
+        diskThreadActive = false;
+        diskCv.notify_all();
+    }
 };
 
 extern std::map<uint32_t, std::shared_ptr<FileTransferTask>> g_TransferTasks;

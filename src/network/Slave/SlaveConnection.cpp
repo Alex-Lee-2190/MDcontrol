@@ -119,12 +119,14 @@ void NetworkReceiver() {
                 memcpy(&nTy, ptr + 9, 4);
                 memcpy(&nPx, ptr + 13, 4);
                 memcpy(&nPy, ptr + 17, 4);
-                g_MirrorActiveIdx = ntohl(nActive);
-                g_MirrorTx = ntohl(nTx);
-                g_MirrorTy = ntohl(nTy);
-                g_RemoteMouseX = ntohl(nPx);
-                g_RemoteMouseY = ntohl(nPy);
+                
+                g_MirrorActiveIdx = (int)ntohl(nActive);
+                g_MirrorTx = (int)ntohl(nTx);
+                g_MirrorTy = (int)ntohl(nTy);
+                g_RemoteMouseX = (int)ntohl(nPx);
+                g_RemoteMouseY = (int)ntohl(nPy);
                 g_Locked = (ptr[21] == 1); 
+
                 processed += 22;
             }
             else if (flag == 10) { 
@@ -292,8 +294,6 @@ void NetworkReceiver() {
                     
                     if (client != INVALID_SOCKET) {
                         DebugLog("[SLAVE] TCP Handshake Successful on Port %d.\n", port);
-                        int one = 1;
-                        setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
                         
                         SocketHandle oldFileSock = g_ClientFileSock;
                         g_ClientFileSock = (SocketHandle)client;
@@ -308,7 +308,7 @@ void NetworkReceiver() {
                             g_LastFilePingTime = SystemUtils::GetTimeMS();
                             SocketHandle mySock = g_ClientFileSock;
                             while (g_Running && g_ClientFileSock == mySock && mySock != INVALID_SOCKET_HANDLE) {
-                                int timeout = (mySock != g_ClientBtFileSock) ? 3000 : 10000;
+                                int timeout = (mySock != g_ClientBtFileSock) ? 10000 : 15000;
                                 if (SystemUtils::GetTimeMS() - g_LastFilePingTime.load() > timeout) {
                                     DebugLog("[SLAVE] File TCP Heartbeat timeout!\n");
                                     if (g_ClientFileSock == mySock) {
@@ -476,7 +476,7 @@ void StartNetworkReceiverThread() {
             g_LastFilePingTime = SystemUtils::GetTimeMS();
             SocketHandle mySock = g_ClientFileSock;
             while (g_Running && g_ClientFileSock == mySock && mySock != INVALID_SOCKET_HANDLE) {
-                int timeout = (mySock != g_ClientBtFileSock) ? 3000 : 10000;
+                int timeout = (mySock != g_ClientBtFileSock) ? 10000 : 15000;
                 if (SystemUtils::GetTimeMS() - g_LastFilePingTime.load() > timeout) {
                     DebugLog("[SLAVE] File TCP Heartbeat timeout!\n");
                     if (g_ClientFileSock == mySock) {

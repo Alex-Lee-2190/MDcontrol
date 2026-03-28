@@ -239,6 +239,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 task->isSender = true;
                 task->deviceName = ctx->name; 
                 task->targetPath = targetPath;
+                task->startDiskThread();
                 {
                     std::lock_guard<std::mutex> lock(g_TaskMutex);
                     g_TransferTasks[taskId] = task;
@@ -291,8 +292,6 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                 
                                 if (connect(sock, (SOCKADDR*)&addr, sizeof(addr)) == 0) {
                                     DebugLog("[MASTER] Connected to %s!\n", ip.c_str());
-                                    int one = 1;
-                                    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
                                     int keepAlive = 1;
                                     setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&keepAlive, sizeof(keepAlive));
                                     
@@ -339,7 +338,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                                 }
                                                 break;
                                             }
-                                            int timeout = (mySock != sCtx->btFileSock) ? 15000 : 30000;
+                                            int timeout = (mySock != sCtx->btFileSock) ? 10000 : 30000;
                                             if (SystemUtils::GetTimeMS() - sCtx->lastFilePongTime.load() > timeout) {
                                                 DebugLog("[MASTER] File TCP Heartbeat timeout!\n");
                                                 if (sCtx->fileSock == mySock) {
@@ -588,7 +587,7 @@ void StartReceiverThread(std::shared_ptr<SlaveCtx> ctx) {
                     }
                     break;
                 }
-                int timeout = (mySock != ctx->btFileSock) ? 15000 : 30000;
+                int timeout = (mySock != ctx->btFileSock) ? 10000 : 30000;
                 if (SystemUtils::GetTimeMS() - ctx->lastFilePongTime.load() > timeout) {
                     DebugLog("[MASTER] File TCP Heartbeat timeout!\n");
                     if (ctx->fileSock == mySock) {

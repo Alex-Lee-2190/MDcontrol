@@ -199,19 +199,64 @@ void MapWidget::paintEvent(QPaintEvent*) {
     p.setFont(oldFont);
 
     // ===== Layer 2: Simulated cursor (red dot) =====
+    double dotX = 0, dotY = 0;
+    bool drawDot = false;
+
     if (!isSlaveMode) {
-        double dotX, dotY;
         if (g_IsRemote && activeDrawIdx != -1 && activeDrawIdx < (int)tempSlaveRects.size()) {
             QRectF r = tempSlaveRects[activeDrawIdx];
             auto& ctx = slavesToDraw[activeDrawIdx];
-            dotX = r.x() + (g_CurTx.load() / (double)ctx.w) * r.width();
-            dotY = r.y() + (g_CurTy.load() / (double)ctx.h) * r.height();
+            int tx = g_CurTx.load();
+            int ty = g_CurTy.load();
+            int cw_safe = ctx.w > 0 ? ctx.w : 1;
+            int ch_safe = ctx.h > 0 ? ctx.h : 1;
+            if (tx < 0) tx = 0; if (tx > cw_safe) tx = cw_safe;
+            if (ty < 0) ty = 0; if (ty > ch_safe) ty = ch_safe;
+            dotX = r.x() + (tx / (double)cw_safe) * r.width();
+            dotY = r.y() + (ty / (double)ch_safe) * r.height();
+            drawDot = true;
         } else {
             int px, py;
             SystemUtils::GetCursorPos(px, py);
             dotX = mxo + (px / g_LocalScale) * s;
             dotY = myo + (py / g_LocalScale) * s;
+            drawDot = true;
         }
+    } else {
+        if (g_SlaveFocused && g_MirrorActiveIdx >= 0 && g_MirrorActiveIdx < (int)tempSlaveRects.size()) {
+            // Master is controlling THIS slave. Use local physical mouse for zero-latency dot.
+            int px, py;
+            SystemUtils::GetCursorPos(px, py);
+            QRectF r = tempSlaveRects[g_MirrorActiveIdx];
+            dotX = r.x() + (px / (double)g_LocalW) * r.width();
+            dotY = r.y() + (py / (double)g_LocalH) * r.height();
+            drawDot = true;
+        } else if (g_MirrorActiveIdx == -1) {
+            // Master is controlling itself
+            int rmx = g_RemoteMouseX.load();
+            int rmy = g_RemoteMouseY.load();
+            if (rmx < 0) rmx = 0;
+            if (rmy < 0) rmy = 0;
+            dotX = mxo + (rmx / g_MirrorMasterScale) * s;
+            dotY = myo + (rmy / g_MirrorMasterScale) * s;
+            drawDot = true;
+        } else if (g_MirrorActiveIdx >= 0 && g_MirrorActiveIdx < (int)tempSlaveRects.size()) {
+            // Master is controlling ANOTHER slave
+            QRectF r = tempSlaveRects[g_MirrorActiveIdx];
+            auto& ctx = slavesToDraw[g_MirrorActiveIdx];
+            int mx = g_MirrorTx.load();
+            int my = g_MirrorTy.load();
+            int cw_safe = ctx.w > 0 ? ctx.w : 1;
+            int ch_safe = ctx.h > 0 ? ctx.h : 1;
+            if (mx < 0) mx = 0; if (mx > cw_safe) mx = cw_safe;
+            if (my < 0) my = 0; if (my > ch_safe) my = ch_safe;
+            dotX = r.x() + (mx / (double)cw_safe) * r.width();
+            dotY = r.y() + (my / (double)ch_safe) * r.height();
+            drawDot = true;
+        }
+    }
+
+    if (drawDot) {
         p.setPen(QPen(Qt::white, 2));
         p.setBrush(QColor(245, 108, 108)); 
         p.drawEllipse(QPointF(dotX, dotY), 4, 4);

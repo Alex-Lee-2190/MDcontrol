@@ -42,6 +42,19 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
 
             SystemUtils::SetCursorPos(cx, cy);
 
+            // 丢弃由 SetCursorPos 引起的系统消息队列残留
+            if (now - g_LastSwitchTime < 50) {
+                dx = 0;
+                dy = 0;
+            }
+
+            // 丢弃异常的跳变增量
+            if (std::abs(dx) > g_LocalW / 3 || std::abs(dy) > g_LocalH / 3) {
+                DebugLog("[INPUT-WARN] Ignored huge jump dx: %d, dy: %d\n", dx, dy);
+                dx = 0;
+                dy = 0;
+            }
+
             if (dx != 0 || dy != 0) {
                 double logicalDx = dx / g_LocalScale;
                 double logicalDy = dy / g_LocalScale;
@@ -56,6 +69,9 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                 bool outOfBounds = !myRect.contains(newAbsX, newAbsY);
                 
                 if (outOfBounds && !g_Locked && (now - g_LastSwitchTime > 300)) {
+                    DebugLog("[INPUT-TRANS] outOfBounds! myRect(x:%.1f, y:%.1f, w:%.1f, h:%.1f), newAbsX: %.1f, newAbsY: %.1f\n", 
+                        myRect.x, myRect.y, myRect.w, myRect.h, newAbsX, newAbsY);
+
                     int newDeviceIdx = -2; 
                     
                     RectD masterRect = {0.0, 0.0, g_LocalW / g_LocalScale, g_LocalH / g_LocalScale};
@@ -85,24 +101,42 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                             int wy = (int)(newAbsY * g_LocalScale);
                             if (wx < 0) wx = 0; if (wx >= g_LocalW) wx = g_LocalW - 1;
                             if (wy < 0) wy = 0; if (wy >= g_LocalH) wy = g_LocalH - 1;
+                            
+                            DebugLog("[INPUT-TRANS] Switching to Master. wx: %d, wy: %d\n", wx, wy);
                             SystemUtils::SetCursorPos(wx, wy);
                         } else {
                             std::shared_ptr<SlaveCtx> newCtx;
                             {
                                 std::lock_guard<std::mutex> lock(g_SlaveListLock);
-                                newCtx = g_SlaveList[newDeviceIdx];
+                                if (newDeviceIdx >= 0 && newDeviceIdx < (int)g_SlaveList.size()) {
+                                    newCtx = g_SlaveList[newDeviceIdx];
+                                }
                             }
-                            RectD newRect = GetLogicalRect(newCtx);
-                            g_CurTx = (int)std::round((newAbsX - newRect.x) * newCtx->scale);
-                            g_CurTy = (int)std::round((newAbsY - newRect.y) * newCtx->scale);
-                            if (g_CurTx < 0) g_CurTx = 0; if (g_CurTx >= newCtx->width) g_CurTx = newCtx->width - 1;
-                            if (g_CurTy < 0) g_CurTy = 0; if (g_CurTy >= newCtx->height) g_CurTy = newCtx->height - 1;
-                            
-                            SendEvent(7, 1, 0, newDeviceIdx); 
+                            if (newCtx) {
+                                RectD newRect = GetLogicalRect(newCtx);
+                                g_CurTx = (int)std::round((newAbsX - newRect.x) * newCtx->scale);
+                                g_CurTy = (int)std::round((newAbsY - newRect.y) * newCtx->scale);
+                                
+                                DebugLog("[INPUT-TRANS] Switching to Slave %d. newRect(x:%.1f, y:%.1f), BeforeClamp_Tx: %d, BeforeClamp_Ty: %d\n", 
+                                    newDeviceIdx, newRect.x, newRect.y, g_CurTx.load(), g_CurTy.load());
+
+                                if (g_CurTx < 0) g_CurTx = 0; if (g_CurTx >= newCtx->width) g_CurTx = newCtx->width - 1;
+                                if (g_CurTy < 0) g_CurTy = 0; if (g_CurTy >= newCtx->height) g_CurTy = newCtx->height - 1;
+                                
+                                DebugLog("[INPUT-TRANS] AfterClamp_Tx: %d, AfterClamp_Ty: %d, targetWidth: %d\n", 
+                                    g_CurTx.load(), g_CurTy.load(), newCtx->width);
+
+                                SendEvent(7, 1, 0, newDeviceIdx); 
+                            } else {
+                                g_IsRemote = false;
+                                g_ActiveSlaveIdx = -1;
+                            }
                         }
                         
                         UpdateUI();
                         return true;
+                    } else {
+                        DebugLog("[INPUT-TRANS] outOfBounds but no adjacent device found. Clamping to edge.\n");
                     }
                 }
                 
@@ -154,15 +188,23 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                     
                     RectD r = GetLogicalRect(ctx);
                     if (r.contains(testX, testY)) {
+                        DebugLog("[INPUT-TRANS] Master boundary breached! Switching to Slave %d. testX: %.1f, testY: %.1f, targetRect(x:%.1f, y:%.1f)\n", 
+                            i, testX, testY, r.x, r.y);
+
                         g_IsRemote = true;
                         g_ActiveSlaveIdx = (int)i;
                         g_LastSwitchTime = now;
                         
                         g_CurTx = (int)std::round((testX - r.x) * ctx->scale);
                         g_CurTy = (int)std::round((testY - r.y) * ctx->scale);
+
+                        DebugLog("[INPUT-TRANS] BeforeClamp_Tx: %d, BeforeClamp_Ty: %d\n", g_CurTx.load(), g_CurTy.load());
+
                         if (g_CurTx < 0) g_CurTx = 0; if (g_CurTx >= ctx->width) g_CurTx = ctx->width - 1;
                         if (g_CurTy < 0) g_CurTy = 0; if (g_CurTy >= ctx->height) g_CurTy = ctx->height - 1;
                         
+                        DebugLog("[INPUT-TRANS] AfterClamp_Tx: %d, AfterClamp_Ty: %d\n", g_CurTx.load(), g_CurTy.load());
+
                         SendEvent(7, 1, 0, (int)i);
                         g_HasUpdate = true;
                         UpdateUI();

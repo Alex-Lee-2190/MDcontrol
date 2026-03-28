@@ -1102,6 +1102,7 @@ void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std
     ctx->connectAddress = addr;
     ctx->isBluetooth = isBT;
     ctx->tcpFileFailed = false; 
+    ctx->lastSentTopo = "";
     
     {
         std::lock_guard<std::mutex> lock(g_SlaveListLock);
@@ -1389,7 +1390,6 @@ void ControlWindow::onStart() {
                 });
                 return;
             }
-            NetUtils::SetNoDelay((SocketHandle)sockFile);
 
             if (!AuthMaster((SocketHandle)sockControl, ip)) {
                 closesocket(sockControl);
@@ -1672,7 +1672,6 @@ void ControlWindow::reconnectSlave(int idx) {
                 closesocket(sockControl);
                 return;
             }
-            NetUtils::SetNoDelay((SocketHandle)sockFile);
 
             if (!AuthMaster((SocketHandle)sockControl, addr)) {
                 closesocket(sockControl);

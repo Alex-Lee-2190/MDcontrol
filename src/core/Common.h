@@ -22,6 +22,20 @@
 #include <filesystem> 
 #include "Interfaces.h"
 
+// 日志相关的枚举
+enum class LogLevel { TRACE, DEBUG, INFO, WARN, ERR };
+enum class LogTag { SYS, NET, BTH, AUTH, KVM, FILE, TRANS, UI, LEGACY };
+
+void InitLogger();
+void ShutdownLogger();
+void AsyncLogImpl(LogLevel level, LogTag tag, const char* file, const char* format, ...);
+
+#define MDC_LOG_TRACE(tag, fmt, ...) AsyncLogImpl(LogLevel::TRACE, tag, __FILE__, fmt, ##__VA_ARGS__)
+#define MDC_LOG_DEBUG(tag, fmt, ...) AsyncLogImpl(LogLevel::DEBUG, tag, __FILE__, fmt, ##__VA_ARGS__)
+#define MDC_LOG_INFO(tag,  fmt, ...) AsyncLogImpl(LogLevel::INFO,  tag, __FILE__, fmt, ##__VA_ARGS__)
+#define MDC_LOG_WARN(tag,  fmt, ...) AsyncLogImpl(LogLevel::WARN,  tag, __FILE__, fmt, ##__VA_ARGS__)
+#define MDC_LOG_ERROR(tag, fmt, ...) AsyncLogImpl(LogLevel::ERR,   tag, __FILE__, fmt, ##__VA_ARGS__)
+
 // Global variables declaration
 
 class MDControlContext;
@@ -34,6 +48,7 @@ extern std::mutex g_SockLock;
 extern std::atomic<bool> g_IgnoreClipUpdate;
 extern std::string g_LastClipText;
 
+extern int g_LogLevel;
 extern bool g_LogToFile;
 extern std::string g_FallbackTransferPath;
 extern bool g_RememberPos;

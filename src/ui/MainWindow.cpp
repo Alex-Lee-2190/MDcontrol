@@ -131,10 +131,10 @@ static QString ShowPinDialog(const QString& name) {
 }
 
 std::string GetPinInputHelper(const QString& name) {
-    DebugLog("[AUTH-UI] Requesting PIN input for device: %s\n", name.toStdString().c_str());
+    MDC_LOG_INFO(LogTag::AUTH, "Requesting PIN input for device");
     if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
         QString text = ShowPinDialog(name);
-        DebugLog("[AUTH-UI] Local PIN input completed. Len=%d\n", text.length());
+        MDC_LOG_INFO(LogTag::AUTH, "Local PIN input completed length: %d", text.length());
         if (text.length() == 6) return text.toStdString();
         return "";
     } else {
@@ -144,14 +144,14 @@ std::string GetPinInputHelper(const QString& name) {
         std::unique_lock<std::mutex> lock(sync->mtx);
         sync->cv.wait(lock,[&]() { return sync->done; });
         
-        DebugLog("[AUTH-UI] Background thread received PIN input result.\n");
+        MDC_LOG_INFO(LogTag::AUTH, "Background thread received PIN input result");
         return sync->pin;
     }
 }
 
 // Symmetrical authentication core logic
 bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
-    DebugLog("[AUTH] Starting Strict Symmetrical Auth for target: %s\n", targetName.c_str());
+    MDC_LOG_INFO(LogTag::AUTH, "Starting strict symmetrical auth for target");
     
     std::vector<char> pkt40;
     pkt40.push_back(40);
@@ -198,7 +198,7 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
     bool mutualTrust = (iTrustPeer && peerTrust == 1);
 
     if (mutualTrust) {
-        DebugLog("[AUTH] Mutual trust established. Proceeding to Strict RSA Challenge...\n");
+        MDC_LOG_INFO(LogTag::AUTH, "Mutual trust established proceeding to strict RSA challenge");
         std::string myNonce = g_Context->CryptoMgr->GenerateRandomString(32);
         std::string encMyNonce = g_Context->CryptoMgr->RSAEncrypt(peerPubKey, myNonce);
         
@@ -236,17 +236,17 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
         std::string returnedMyNonce(peerDecData.begin(), peerDecData.end());
 
         if (returnedMyNonce == myNonce) {
-            DebugLog("[AUTH] RSA Challenge SUCCESS. Both sides proved private key ownership.\n");
+            MDC_LOG_INFO(LogTag::AUTH, "RSA challenge successful both sides proved private key ownership");
             return true;
         } else {
-            DebugLog("[AUTH] RSA Challenge FAILED. Decrypted nonce mismatch.\n");
+            MDC_LOG_WARN(LogTag::AUTH, "RSA challenge failed decrypted nonce mismatch");
             return false;
         }
     } else {
-        DebugLog("[AUTH] Trust missing or asymmetrical. Falling back to explicit PIN Pairing...\n");
+        MDC_LOG_INFO(LogTag::AUTH, "Trust missing or asymmetrical falling back to explicit PIN pairing");
         std::string myPin = GetPinInputHelper(QString::fromStdString(targetName));
         if (myPin.empty()) {
-            DebugLog("[AUTH] PIN input cancelled.\n");
+            MDC_LOG_INFO(LogTag::AUTH, "PIN input cancelled");
             return false;
         }
 
@@ -269,11 +269,11 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
         std::string decPeerPin = g_Context->CryptoMgr->RSADecrypt(g_MyPrivKey, std::string(peerEncData.begin(), peerEncData.end()));
 
         if (decPeerPin == myPin) {
-            DebugLog("[AUTH] PIN Match SUCCESS. Saving Trusted Key for future RSA challenges.\n");
+            MDC_LOG_INFO(LogTag::AUTH, "PIN match successful saving trusted key for future RSA challenges");
             SaveTrustedKey(sock, peerPubKey);
             return true;
         } else {
-            DebugLog("[AUTH] PIN Match FAILED. (Expected: %s, Got: %s)\n", myPin.c_str(), decPeerPin.c_str());
+            MDC_LOG_WARN(LogTag::AUTH, "PIN match failed");
             return false;
         }
     }
@@ -312,6 +312,7 @@ ControlWindow::ControlWindow() {
     m_trayIcon->setContextMenu(m_trayMenu);
 
     connect(m_trayIcon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason){
+        MDC_LOG_INFO(LogTag::UI, "Tray icon activated reason: %d", reason);
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
             this->showNormal();
             this->activateWindow();
@@ -397,24 +398,24 @@ ControlWindow::ControlWindow() {
     connect(clip, &QClipboard::dataChanged, this,[=](){
         if (g_IgnoreClipUpdate) return;
         
-        DebugLog("[UI] Clipboard changed.\n");
+        MDC_LOG_DEBUG(LogTag::UI, "Clipboard changed");
         const QMimeData* mime = clip->mimeData();
         if (mime->hasUrls()) {
-            DebugLog("[UI] Mime has URLs.\n");
+            MDC_LOG_DEBUG(LogTag::UI, "Mime has URLs");
             std::vector<std::string> paths;
             for (const QUrl& url : mime->urls()) {
                 if (url.isLocalFile()) {
                     std::string p = url.toLocalFile().toUtf8().constData();
                     paths.push_back(p);
-                    DebugLog("[UI] Local File Path: %s\n", p.c_str());
+                    MDC_LOG_DEBUG(LogTag::UI, "Local file path length: %zu", p.length());
                 }
             }
             if (!paths.empty()) {
                 if (g_ClientSock == INVALID_SOCKET_HANDLE) { 
-                     DebugLog("[UI] Sending %d files to MasterSendFileClipboard.\n", (int)paths.size());
+                     MDC_LOG_INFO(LogTag::UI, "Sending %d files to MasterSendFileClipboard", (int)paths.size());
                      RunInQThread([paths]() { MasterSendFileClipboard(paths); });
                 } else { 
-                     DebugLog("[UI] Sending %d files to SlaveSendFileClipboard.\n", (int)paths.size());
+                     MDC_LOG_INFO(LogTag::UI, "Sending %d files to SlaveSendFileClipboard", (int)paths.size());
                      RunInQThread([paths]() { SlaveSendFileClipboard(paths); });
                 }
                 return; 
@@ -682,6 +683,18 @@ void ControlWindow::openSettings() {
     logL->addWidget(openLogBtn);
     debugLayout->addLayout(logL);
 
+    QHBoxLayout* logLevelL = new QHBoxLayout();
+    logLevelL->addWidget(new QLabel(T("日志级别")));
+    QComboBox* logLevelCb = new QComboBox();
+    logLevelCb->addItem("TRACE", 0);
+    logLevelCb->addItem("DEBUG", 1);
+    logLevelCb->addItem("INFO", 2);
+    logLevelCb->addItem("WARN", 3);
+    logLevelCb->addItem("ERROR", 4);
+    logLevelCb->setCurrentIndex(logLevelCb->findData(g_LogLevel));
+    logLevelL->addWidget(logLevelCb);
+    debugLayout->addLayout(logLevelL);
+
     QObject::connect(openLogBtn, &QPushButton::clicked, [](){
         SystemUtils::OpenLogDirectory();
     });
@@ -691,6 +704,7 @@ void ControlWindow::openSettings() {
     QDialogButtonBox* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     mainLayout->addWidget(box);
     QObject::connect(box, &QDialogButtonBox::accepted, [&](){
+        MDC_LOG_INFO(LogTag::UI, "Settings saved language: %d logLevel: %d", langCb->currentData().toInt(), logLevelCb->currentData().toInt());
         int oldLang = g_Language;
         g_Language = langCb->currentData().toInt();
 
@@ -702,6 +716,7 @@ void ControlWindow::openSettings() {
         g_RememberPos = rememberPosCb->isChecked();
         
         g_LogToFile = logCb->isChecked();
+        g_LogLevel = logLevelCb->currentData().toInt();
 
         QSettings s("MDControl", "Settings");
         s.setValue("HkToggle_Mod", g_HkToggleMod); s.setValue("HkToggle_VK", g_HkToggleVk);
@@ -710,6 +725,7 @@ void ControlWindow::openSettings() {
         s.setValue("HkExit_Mod", g_HkExitMod); s.setValue("HkExit_VK", g_HkExitVk);
         s.setValue("FallbackPath", QString::fromStdString(g_FallbackTransferPath));
         s.setValue("LogToFile", g_LogToFile);
+        s.setValue("LogLevel", g_LogLevel);
         s.setValue("RememberPos", g_RememberPos);
         s.setValue("Language", g_Language);
         
@@ -879,22 +895,22 @@ void ControlWindow::startListening() {
             listen((SOCKET)tcpListen, 2); 
             
             while (g_Running && g_TcpListenSock == tcpListen) {
-                DebugLog("[*] Waiting for Master (TCP:%d)...\n", port);
+                MDC_LOG_INFO(LogTag::NET, "Waiting for master TCP port %d", port);
                 SOCKET clientControl = accept((SOCKET)tcpListen, NULL, NULL);
                 if (clientControl == INVALID_SOCKET || g_TcpListenSock != tcpListen) break;
                 if (!g_Running) break;
                 
-                DebugLog("[+] TCP Control Connected! Waiting for File Channel...\n");
+                MDC_LOG_INFO(LogTag::NET, "TCP control connected waiting for file channel");
                 SOCKET clientFile = accept((SOCKET)tcpListen, NULL, NULL);
                 if (clientFile == INVALID_SOCKET) {
                     closesocket(clientControl);
                     break;
                 }
                 
-                DebugLog("[+] TCP File Connected!\n");
+                MDC_LOG_INFO(LogTag::NET, "TCP file connected");
 
                 if (!AuthSlave((SocketHandle)clientControl)) {
-                    DebugLog("[-] TCP Auth Failed!\n");
+                    MDC_LOG_WARN(LogTag::NET, "TCP auth failed");
                     closesocket(clientControl);
                     closesocket(clientFile);
                     continue;
@@ -907,7 +923,7 @@ void ControlWindow::startListening() {
                 char mode = 0; 
                 recv(clientControl, &mode, 1, 0); 
                 
-                DebugLog("[SLAVE-HANDSHAKE] Auth successful, beginning handshake sequence...\n");
+                MDC_LOG_INFO(LogTag::NET, "Auth successful beginning handshake sequence");
                 SocketHandle sock = (SocketHandle)clientControl;
                 unsigned int netW = htonl(g_LocalW), netH = htonl(g_LocalH);
                 char resBuf[8]; memcpy(resBuf, &netW, 4); memcpy(resBuf + 4, &netH, 4);
@@ -961,12 +977,12 @@ void ControlWindow::startListening() {
                 if (g_Context->BluetoothMgr) {
                     auto clients = g_Context->BluetoothMgr->Listen(4, 5);
                     if (clients.size() >= 1 && g_Running) {
-                        DebugLog("[+] Bluetooth Control Connected (Single/Dual Channel)!\n");
+                        MDC_LOG_INFO(LogTag::NET, "Bluetooth control connected single or dual channel");
                         InterfaceSocketHandle sCtrl = clients[0];
                         InterfaceSocketHandle sFile = clients.size() >= 2 ? clients[1] : (InterfaceSocketHandle)INVALID_SOCKET_HANDLE;
                         
                         if (!AuthSlave((SocketHandle)sCtrl)) {
-                            DebugLog("[-] BTH Auth Failed!\n");
+                            MDC_LOG_WARN(LogTag::NET, "BTH auth failed");
                             NetUtils::CloseSocket((SocketHandle)sCtrl);
                             if (sFile != (InterfaceSocketHandle)INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
                             continue;
@@ -976,7 +992,7 @@ void ControlWindow::startListening() {
                             if (g_MainObject) ((ControlWindow*)g_MainObject)->stopListening();
                         });
 
-                        DebugLog("[SLAVE-HANDSHAKE] Auth successful, beginning handshake sequence...\n");
+                        MDC_LOG_INFO(LogTag::NET, "Auth successful beginning handshake sequence");
                         SocketHandle sock = (SocketHandle)sCtrl;
                         unsigned int netW = htonl(g_LocalW), netH = htonl(g_LocalH);
                         char resBuf[8]; memcpy(resBuf, &netW, 4); memcpy(resBuf + 4, &netH, 4);
@@ -1033,14 +1049,14 @@ void ControlWindow::startListening() {
 
 void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std::string name, std::string addr, bool isBT) {
     char res[8]; 
-    DebugLog("[MASTER-HANDSHAKE] Waiting for 8 bytes config from Slave...\n");
+    MDC_LOG_DEBUG(LogTag::NET, "Waiting for 8 bytes config from slave");
     if (!NetUtils::RecvAll(sockControl, res, 8)) {
-        DebugLog("[MASTER-HANDSHAKE] Failed to receive 8 bytes. Connection dropped.\n");
+        MDC_LOG_WARN(LogTag::NET, "Failed to receive 8 bytes connection dropped");
         NetUtils::CloseSocket(sockControl);
         if(sockFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket(sockFile);
         return;
     }
-    DebugLog("[MASTER-HANDSHAKE] Successfully received 8 bytes config.\n");
+    MDC_LOG_DEBUG(LogTag::NET, "Successfully received 8 bytes config");
     unsigned int rW, rH; memcpy(&rW, res, 4); memcpy(&rH, res + 4, 4);
     
     char scaleBuf[9];
@@ -1164,7 +1180,7 @@ void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std
     memcpy(configBuf + 9, &lX, 8);
     memcpy(configBuf + 17, &lY, 8);
     
-    DebugLog("[MASTER-HANDSHAKE] Sending 25 bytes pos config to Slave...\n");
+    MDC_LOG_DEBUG(LogTag::NET, "Sending 25 bytes pos config to slave");
     send(sockControl, configBuf, 25, 0);
 
     std::vector<char> pkt25;
@@ -1172,9 +1188,9 @@ void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std
     unsigned int plen = htonl((unsigned int)g_MySysProps.length());
     pkt25.insert(pkt25.end(), (char*)&plen, (char*)&plen + 4);
     pkt25.insert(pkt25.end(), g_MySysProps.begin(), g_MySysProps.end());
-    DebugLog("[MASTER-HANDSHAKE] Sending pkt25 sys properties to Slave...\n");
+    MDC_LOG_DEBUG(LogTag::NET, "Sending pkt25 sys properties to slave");
     send(sockControl, pkt25.data(), pkt25.size(), 0);
-    DebugLog("[MASTER-HANDSHAKE] Master Handshake logic executed.\n");
+    MDC_LOG_INFO(LogTag::NET, "Master handshake logic executed");
 }
 
 void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
@@ -1215,7 +1231,7 @@ void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
     
     refreshBtList();
     
-    DebugLog("[MASTER-BT] Initiating connection to %012llX on port 4...\n", addr);
+    MDC_LOG_INFO(LogTag::BTH, "Initiating connection to %012llX on port 4", addr);
     statusLabel->setText(T("正在连接"));
     startBtn->setEnabled(false);
     btListWidget->setEnabled(false);
@@ -1226,11 +1242,11 @@ void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
         if (g_Context->BluetoothMgr) {
             InterfaceSocketHandle sControl = g_Context->BluetoothMgr->Connect(addr, 4);
             if ((SocketHandle)sControl != INVALID_SOCKET_HANDLE) {
-                 DebugLog("[MASTER-BT] Control Connection successful. Initiating File Connection...\n");
+                 MDC_LOG_INFO(LogTag::BTH, "Control connection established. Initiating file connection");
                  InterfaceSocketHandle sFile = g_Context->BluetoothMgr->Connect(addr, 5);
 
                  if (!AuthMaster((SocketHandle)sControl, stdName)) {
-                     DebugLog("[-] BTH AuthMaster Failed!\n");
+                     MDC_LOG_WARN(LogTag::BTH, "BTH AuthMaster failed");
                      NetUtils::CloseSocket((SocketHandle)sControl);
                      if ((SocketHandle)sFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
                      
@@ -1302,6 +1318,7 @@ void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
 
 void ControlWindow::onStart() {
     bool isBT = modeBtBtn->isChecked();
+    MDC_LOG_INFO(LogTag::UI, "User clicked start connection isBT: %d", isBT);
 
     if (isBT && g_Context->BluetoothMgr && !g_Context->BluetoothMgr->IsAvailable()) {
         QMessageBox::warning(this, T("提示"), T("蓝牙未打开或不可用"));
@@ -1442,6 +1459,7 @@ void ControlWindow::onStart() {
 }
 
 void ControlWindow::onStop() {
+    MDC_LOG_INFO(LogTag::UI, "User clicked stop connection");
     g_Running = false;
     
     if (g_Context->BluetoothMgr) g_Context->BluetoothMgr->StopScan();
@@ -1513,7 +1531,7 @@ void ControlWindow::onStop() {
 }
 
 void ControlWindow::onTransferCancelled(uint32_t taskId) {
-    DebugLog("[DEBUG-CANCEL] Local UI Triggered Cancel for Task %u\n", taskId);
+    MDC_LOG_INFO(LogTag::TRANS, "Local UI triggered cancel for task %u", taskId);
     if (m_transferWidgets.count(taskId) && m_transferWidgets[taskId]) {
         m_transferWidgets[taskId]->setFinished();
         m_transferWidgets[taskId]->deleteLater();
@@ -1555,7 +1573,7 @@ void ControlWindow::onTransferCancelled(uint32_t taskId) {
 }
 
 void ControlWindow::onTransferPaused(uint32_t taskId, bool paused) {
-    DebugLog("[DEBUG-PAUSE] Local UI Triggered Pause for Task %u (Paused: %d)\n", taskId, paused);
+    MDC_LOG_INFO(LogTag::TRANS, "Local UI triggered pause for task %u paused %d", taskId, paused);
 
     if (!paused) { 
         bool isBluetooth = false;
@@ -1638,6 +1656,7 @@ void ControlWindow::onTransferPaused(uint32_t taskId, bool paused) {
 }
 
 void ControlWindow::reconnectSlave(int idx) {
+    MDC_LOG_INFO(LogTag::UI, "User clicked reconnect for slave index: %d", idx);
     std::string addr;
     bool isBT = false;
     std::string name;

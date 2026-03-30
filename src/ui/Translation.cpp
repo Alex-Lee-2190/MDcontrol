@@ -88,6 +88,7 @@ static std::map<QString, QString> dict_en_US = {
     {"记住上次连接的被控端位置", "Remember previous Slave positions"},
     {"调试与日志", "Debug and Logs"},
     {"保存日志", "Save Logs"},
+    {"日志级别", "Log Level"},
     {"正在连接", "Connecting"},
     {"正在扫描", "Scanning"},
     {"清除历史与配稳记录", "Clear history and pairing records"},

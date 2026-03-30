@@ -18,11 +18,13 @@ void WinClipboard::Init(std::function<void(std::string)> onTextChange, std::func
 }
 
 void WinClipboard::SetLocalClipboard(const std::string& text_utf8) {
+    MDC_LOG_INFO(LogTag::SYS, "SetLocalClipboard text length: %zu", text_utf8.length());
     std::string* pText = new std::string(text_utf8);
     if (m_hwnd) PostMessage(m_hwnd, WM_SET_CLIPBOARD, 0, (LPARAM)pText);
 }
 
 void WinClipboard::SetLocalFiles(const std::vector<std::string>& filePaths) {
+    MDC_LOG_INFO(LogTag::SYS, "SetLocalFiles count: %zu", filePaths.size());
     if (filePaths.empty()) return;
 
     std::vector<wchar_t> pathBuffer;
@@ -40,6 +42,7 @@ void WinClipboard::SetLocalFiles(const std::vector<std::string>& filePaths) {
 
     DROPFILES* df = (DROPFILES*)GlobalLock(hGlob);
     if (!df) {
+        MDC_LOG_ERROR(LogTag::SYS, "GlobalLock failed for DROPFILES");
         GlobalFree(hGlob);
         return;
     }
@@ -58,6 +61,7 @@ void WinClipboard::SetLocalFiles(const std::vector<std::string>& filePaths) {
         SetClipboardData(CF_HDROP, hGlob);
         CloseClipboard();
     } else {
+        MDC_LOG_ERROR(LogTag::SYS, "SetLocalFiles OpenClipboard failed error: %lu", GetLastError());
         GlobalFree(hGlob);
     }
     g_IgnoreClipUpdate = false;
@@ -67,15 +71,18 @@ void WinClipboard::SetLocalFiles(const std::vector<std::string>& filePaths) {
 void WinClipboard::StartMonitor() {
     if (m_running) return;
     m_running = true;
+    MDC_LOG_INFO(LogTag::SYS, "Clipboard monitor thread starting");
     std::thread(&WinClipboard::MonitorThreadFunc, this).detach();
 }
 
 void WinClipboard::OnClipboardUpdate() {
     if (g_IgnoreClipUpdate) return;
+    MDC_LOG_TRACE(LogTag::SYS, "OnClipboardUpdate triggered");
 
     for (int i = 0; i < 10; ++i) { 
         if (OpenClipboard(m_hwnd)) {
             if (IsClipboardFormatAvailable(CF_HDROP)) {
+                MDC_LOG_INFO(LogTag::SYS, "Clipboard format CF_HDROP available");
                 HANDLE hData = GetClipboardData(CF_HDROP);
                 if (hData) {
                     HDROP hDrop = (HDROP)GlobalLock(hData);
@@ -98,6 +105,7 @@ void WinClipboard::OnClipboardUpdate() {
                 }
             }
             else if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+                MDC_LOG_INFO(LogTag::SYS, "Clipboard format CF_UNICODETEXT available");
                 HANDLE hData = GetClipboardData(CF_UNICODETEXT);
                 if (hData) {
                     wchar_t* wstr = (wchar_t*)GlobalLock(hData);
@@ -117,12 +125,14 @@ void WinClipboard::OnClipboardUpdate() {
             CloseClipboard();
             break;
         }
+        MDC_LOG_WARN(LogTag::SYS, "OpenClipboard failed retry: %d error: %lu", i, GetLastError());
         Sleep(10);
     }
 }
 
 void WinClipboard::OnSetClipboardMsg(std::string* text) {
     if (!text) return;
+    MDC_LOG_TRACE(LogTag::SYS, "OnSetClipboardMsg processing text length: %zu", text->length());
     
     if (*text != g_LastClipText) {
         g_LastClipText = *text;

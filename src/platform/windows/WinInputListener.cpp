@@ -10,6 +10,7 @@ static HHOOK s_hKbdHook = NULL;
 
 LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION) {
+        MDC_LOG_TRACE(LogTag::SYS, "LowLevelMouseProc intercepted action");
         MSLLHOOKSTRUCT* p = (MSLLHOOKSTRUCT*)lParam;
         if (p->flags & LLMHF_INJECTED) return CallNextHookEx(s_hMouseHook, nCode, wParam, lParam);
 
@@ -46,6 +47,7 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION) {
+        MDC_LOG_TRACE(LogTag::SYS, "LowLevelKeyboardProc intercepted action");
         KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
         bool down = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
         bool sys = (wParam == WM_SYSKEYDOWN || wParam == WM_SYSKEYUP);
@@ -58,11 +60,16 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 void WinInputListener::Start() {
+    MDC_LOG_INFO(LogTag::SYS, "Starting Windows input listener hooks");
     if (!s_hMouseHook) s_hMouseHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandle(NULL), 0);
     if (!s_hKbdHook) s_hKbdHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+    
+    if (!s_hMouseHook) MDC_LOG_ERROR(LogTag::SYS, "Failed to set mouse hook error: %lu", GetLastError());
+    if (!s_hKbdHook) MDC_LOG_ERROR(LogTag::SYS, "Failed to set keyboard hook error: %lu", GetLastError());
 }
 
 void WinInputListener::Stop() {
+    MDC_LOG_INFO(LogTag::SYS, "Stopping Windows input listener hooks");
     if (s_hMouseHook) { UnhookWindowsHookEx(s_hMouseHook); s_hMouseHook = NULL; }
     if (s_hKbdHook) { UnhookWindowsHookEx(s_hKbdHook); s_hKbdHook = NULL; }
 }

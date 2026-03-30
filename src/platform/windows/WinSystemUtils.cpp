@@ -29,6 +29,10 @@ namespace SystemUtils {
         return "en";
     }
 
+    uint32_t GetCurrentThreadId() {
+        return ::GetCurrentThreadId();
+    }
+
     bool HasNetworkConnectivity() {
         bool hasNet = false;
         HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -44,6 +48,7 @@ namespace SystemUtils {
         }
         
         if (coInit) CoUninitialize();
+        MDC_LOG_TRACE(LogTag::SYS, "HasNetworkConnectivity returning: %d", hasNet);
         return hasNet;
     }
 
@@ -87,6 +92,7 @@ namespace SystemUtils {
         }
         
         if (coInit) CoUninitialize();
+        MDC_LOG_TRACE(LogTag::SYS, "GetActiveNetworkName returning length: %zu", netName.length());
         return netName;
     }
 
@@ -165,6 +171,7 @@ namespace SystemUtils {
                 freeaddrinfo(result);
             }
         }
+        MDC_LOG_INFO(LogTag::SYS, "GetLocalIPAddresses found %zu addresses", ips.size());
         return ips;
     }
 
@@ -423,9 +430,7 @@ namespace SystemUtils {
 
         FILE* f = fopen(fullPath.c_str(), "a");
         if (f) {
-            SYSTEMTIME st;
-            GetLocalTime(&st);
-            fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d.%03d] %s", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, msg.c_str());
+            fprintf(f, "%s", msg.c_str());
             fclose(f);
             s_lineCount++;
         }

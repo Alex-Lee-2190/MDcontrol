@@ -522,7 +522,7 @@ void MapWidget::mousePressEvent(QMouseEvent* event) {
                     QTimer::singleShot(100, this, [this](){ m_pressedBtn = 0; update(); });
                     update();
                     if (targetCtx->sock != INVALID_SOCKET_HANDLE) {
-                        DebugLog("[UI] Sending Disconnect (Flag 8) to Slave %d\n", m_selectedDeviceIdx);
+                        MDC_LOG_INFO(LogTag::UI, "Sending Disconnect (Flag 8) to Slave %d", m_selectedDeviceIdx);
                         char pkt = 8;
                         {
                             std::lock_guard<std::mutex> netLock(targetCtx->sendLock);
@@ -695,7 +695,7 @@ void MapWidget::mousePressEvent(QMouseEvent* event) {
                      QAction* disconnectAction = menu.addAction(T("断开连接"));
                      connect(disconnectAction, &QAction::triggered, [=]() {
                          if (targetCtxRight->sock != INVALID_SOCKET_HANDLE) {
-                             DebugLog("[UI] Disconnecting slave %d from menu\n", hitIndex);
+                             MDC_LOG_INFO(LogTag::UI, "Disconnecting slave %d from menu", hitIndex);
                              char pkt = 8;
                              {
                                  std::lock_guard<std::mutex> netLock(targetCtxRight->sendLock);

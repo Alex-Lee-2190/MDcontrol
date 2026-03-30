@@ -14,12 +14,16 @@ WinBluetoothMgr::~WinBluetoothMgr() { StopScan(); }
 
 bool WinBluetoothMgr::IsAvailable() {
     SOCKET s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
-    if (s == INVALID_SOCKET) return false;
+    if (s == INVALID_SOCKET) {
+        MDC_LOG_ERROR(LogTag::BTH, "IsAvailable socket creation failed error: %lu", GetLastError());
+        return false;
+    }
     
     SOCKADDR_BTH sa = { 0 };
     sa.addressFamily = AF_BTH;
     sa.port = 0;
     if (bind(s, (SOCKADDR*)&sa, sizeof(sa)) != 0) {
+        MDC_LOG_ERROR(LogTag::BTH, "IsAvailable bind failed error: %lu", GetLastError());
         closesocket(s);
         return false;
     }
@@ -30,6 +34,7 @@ bool WinBluetoothMgr::IsAvailable() {
 void WinBluetoothMgr::StartScan(std::function<void(const BluetoothDevice&)> onDeviceFound, std::function<void(const std::string&)> onFinished) {
     if (m_scanning) return;
     m_scanning = true;
+    MDC_LOG_INFO(LogTag::BTH, "Bluetooth scan started");
 
     std::thread([this, onDeviceFound, onFinished]() {
         WSAQUERYSETW qs;
@@ -40,6 +45,7 @@ void WinBluetoothMgr::StartScan(std::function<void(const BluetoothDevice&)> onDe
 
         HANDLE hLookup;
         if (WSALookupServiceBeginW(&qs, dwControlFlags, &hLookup) != 0) {
+            MDC_LOG_ERROR(LogTag::BTH, "WSALookupServiceBeginW failed error: %lu", GetLastError());
             if (onFinished) onFinished("Scan Start Failed");
             m_scanning = false;
             return;
@@ -68,10 +74,12 @@ void WinBluetoothMgr::StartScan(std::function<void(const BluetoothDevice&)> onDe
                 dev.name = "Unknown";
             }
             
+            MDC_LOG_INFO(LogTag::BTH, "Bluetooth device found MAC: %012llX Name: %s", dev.address, dev.name.c_str());
             if (onDeviceFound) onDeviceFound(dev);
         }
         WSALookupServiceEnd(hLookup);
         m_scanning = false;
+        MDC_LOG_INFO(LogTag::BTH, "Bluetooth scan finished");
         if (onFinished) onFinished("Scan Finished");
     }).detach();
 }
@@ -81,8 +89,12 @@ void WinBluetoothMgr::StopScan() {
 }
 
 InterfaceSocketHandle WinBluetoothMgr::Connect(unsigned long long address, int port) {
+    MDC_LOG_INFO(LogTag::BTH, "Attempting Bluetooth connect to %012llX port %d", address, port);
     SOCKET s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
-    if (s == INVALID_SOCKET) return (InterfaceSocketHandle)INVALID_SOCKET;
+    if (s == INVALID_SOCKET) {
+        MDC_LOG_ERROR(LogTag::BTH, "Bluetooth socket creation failed error: %lu", GetLastError());
+        return (InterfaceSocketHandle)INVALID_SOCKET;
+    }
 
     SOCKADDR_BTH sa = {0};
     sa.addressFamily = AF_BTH;
@@ -90,10 +102,12 @@ InterfaceSocketHandle WinBluetoothMgr::Connect(unsigned long long address, int p
     sa.port = port;
 
     if (connect(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
+        MDC_LOG_ERROR(LogTag::BTH, "Bluetooth connect failed error: %lu", GetLastError());
         closesocket(s);
         return (InterfaceSocketHandle)INVALID_SOCKET;
     }
     
+    MDC_LOG_INFO(LogTag::BTH, "Bluetooth connect successful");
     return (InterfaceSocketHandle)s;
 }
 
@@ -120,10 +134,12 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
             Sleep(500);
         }
         if (retries < 0) {
+            MDC_LOG_ERROR(LogTag::BTH, "Bluetooth bind failed port %d retries exhausted", p);
             closesocket(s); return INVALID_SOCKET;
         }
 
         if (listen(s, 1) != 0) {
+            MDC_LOG_ERROR(LogTag::BTH, "Bluetooth listen failed port %d error: %lu", p, GetLastError());
             closesocket(s); return INVALID_SOCKET;
         }
         return s;
@@ -131,7 +147,7 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
 
     SOCKET sCtrl = SetupListener(portControl);
     if (sCtrl == INVALID_SOCKET) {
-        DebugLog("[ERROR] Failed to bind Control Port %d\n", portControl);
+        MDC_LOG_ERROR(LogTag::BTH, "Failed to bind control port %d", portControl);
         return clients;
     }
 
@@ -141,7 +157,7 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
     if (portFile > 0) {
         sFile = SetupListener(portFile);
         if (sFile == INVALID_SOCKET) {
-            DebugLog("[ERROR] Failed to bind File Port %d\n", portFile);
+            MDC_LOG_ERROR(LogTag::BTH, "Failed to bind file port %d", portFile);
             
             SOCKET s = (SOCKET)m_listeningSocket.exchange((unsigned long long)INVALID_SOCKET);
             if (s != INVALID_SOCKET) closesocket(s);
@@ -170,6 +186,7 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
     qs.lpcsaBuffer = &csAddr;
     
     if (WSASetServiceW(&qs, RNRSERVICE_REGISTER, 0) != 0) {
+        MDC_LOG_ERROR(LogTag::BTH, "WSASetServiceW register failed error: %lu", GetLastError());
         SOCKET s = (SOCKET)m_listeningSocket.exchange((unsigned long long)INVALID_SOCKET);
         if (s != INVALID_SOCKET) closesocket(s);
 
@@ -177,7 +194,7 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
         return clients;
     }
 
-    DebugLog("[*] Bluetooth Service Registered. Listening on Ch %d%s...\n", portControl, (portFile > 0) ? " and File Port" : "");
+    MDC_LOG_INFO(LogTag::BTH, "Bluetooth service registered listening on channel %d%s", portControl, (portFile > 0) ? " and File Port" : "");
     
     SOCKET cCtrl = INVALID_SOCKET;
     while (g_Running) {
@@ -190,12 +207,12 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
             break; 
         }
         
-        DebugLog("[WARNING] Accept Control Socket aborted incidentally. Retrying...\n");
+        MDC_LOG_WARN(LogTag::BTH, "Accept control socket aborted incidentally retrying");
         Sleep(100); 
     }
 
     if (cCtrl != INVALID_SOCKET) {
-        DebugLog("[*] Control Socket Accepted.\n");
+        MDC_LOG_INFO(LogTag::BTH, "Control socket accepted");
         clients.push_back((InterfaceSocketHandle)cCtrl);
         
         if (sFile != INVALID_SOCKET) {
@@ -212,21 +229,21 @@ std::vector<InterfaceSocketHandle> WinBluetoothMgr::Listen(int portControl, int 
                     break;
                 }
                 
-                DebugLog("[WARNING] Accept File Socket aborted incidentally. Retrying...\n");
+                MDC_LOG_WARN(LogTag::BTH, "Accept file socket aborted incidentally retrying");
                 Sleep(100);
             }
             
             if (cFile != INVALID_SOCKET) {
-                 DebugLog("[*] File Socket Accepted.\n");
+                 MDC_LOG_INFO(LogTag::BTH, "File socket accepted");
                  clients.push_back((InterfaceSocketHandle)cFile);
             } else {
-                DebugLog("[ERROR] Accept File Socket Failed.\n");
+                MDC_LOG_ERROR(LogTag::BTH, "Accept file socket failed error: %lu", GetLastError());
                 closesocket(cCtrl);
                 clients.clear();
             }
         }
     } else {
-        DebugLog("[ERROR] Accept Control Socket Failed.\n");
+        MDC_LOG_ERROR(LogTag::BTH, "Accept control socket failed error: %lu", GetLastError());
     }
 
     WSASetServiceW(&qs, RNRSERVICE_DELETE, 0);

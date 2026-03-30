@@ -38,7 +38,7 @@ void NetworkMonitorThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 std::lock_guard<std::mutex> lock(ctx->sendLock);
                 send(ctx->sock, &pkt, 1, 0);
             }
-            DebugLog("[MASTER] Network Lost! Sending Flag 32 and fallback to BT.\n");
+            MDC_LOG_WARN(LogTag::NET, "Network disconnected send Flag 32 and fallback to BT");
             ctx->tcpFileFailed = true;
             if (ctx->fileSock != INVALID_SOCKET_HANDLE && ctx->fileSock != ctx->btFileSock) {
                 NetUtils::CloseSocket(ctx->fileSock);
@@ -60,7 +60,7 @@ void NetworkMonitorThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 std::lock_guard<std::mutex> lock(ctx->sendLock);
                 send(ctx->sock, &pkt, 1, 0);
             }
-            DebugLog("[MASTER] Network Recovered/Changed! Sending Flag 20.\n");
+            MDC_LOG_INFO(LogTag::NET, "Network state changed send Flag 20 current net: %s", currentNetName.c_str());
         }
         
         lastHasNet = currentHasNet;
@@ -88,7 +88,10 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
 
     while (g_Running && ctx->connected && ctx->sock != INVALID_SOCKET_HANDLE) {
         int ret = recv(ctx->sock, buffer.data() + offset, buffer.size() - offset, 0);
-        if (ret <= 0) break;
+        if (ret <= 0) {
+            MDC_LOG_INFO(LogTag::NET, "Receiver loop exited recv ret: %d", ret);
+            break;
+        }
         int total = offset + ret;
         int processed = 0;
 
@@ -130,7 +133,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 if (remaining < 5) break;
                 unsigned int numFiles; memcpy(&numFiles, ptr+1, 4);
                 int fileCount = ntohl(numFiles);
-                DebugLog("[MASTER] Received Root File Info (Flag 12) from Slave: %d roots\n", fileCount);
+                MDC_LOG_INFO(LogTag::TRANS, "Receive Root file info Flag 12 from Slave roots: %d", fileCount);
                 
                 {
                     std::lock_guard<std::mutex> lock(g_FileClipMutex);
@@ -151,7 +154,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                         currentOffset += 8;
                         infos.push_back({name, ntohll(netSize), ""}); 
                         g_ReceivedRoots.push_back(name); 
-                        DebugLog("[MASTER] Root[%d]: %s\n", i, name.c_str());
+                        MDC_LOG_DEBUG(LogTag::TRANS, "Root index %d received name length: %zu", i, name.length());
                     }
                     if (safe) {
                         g_LastCopiedFiles = infos; 
@@ -274,14 +277,14 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
 
                 if (safe) {
                     if (count == 0 || !SystemUtils::HasNetworkConnectivity()) {
-                        DebugLog("[MASTER] Network check failed. Aborting TCP File connect.\n");
+                        MDC_LOG_WARN(LogTag::NET, "Network check failed abort TCP file connect");
                         ctx->tcpFileFailed = true;
                     } else {
-                        DebugLog("[MASTER] Received IP List (%d IPs) on Port %d. Racing...\n", count, port);
+                        MDC_LOG_INFO(LogTag::NET, "Receive IP list count %d on port %d racing", count, port);
                         std::thread([=](std::vector<std::string> targetIPs, int targetPort, std::shared_ptr<SlaveCtx> sCtx){
                             SOCKET sock = INVALID_SOCKET;
                             for(const auto& ip : targetIPs) {
-                                DebugLog("[MASTER] Trying %s:%d...\n", ip.c_str(), targetPort);
+                                MDC_LOG_DEBUG(LogTag::NET, "Attempting TCP connect to IP: %s Port: %d", ip.c_str(), targetPort);
                                 sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
                                 if (sock == INVALID_SOCKET) continue;
                                 
@@ -291,7 +294,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                 addr.sin_port = htons(targetPort);
                                 
                                 if (connect(sock, (SOCKADDR*)&addr, sizeof(addr)) == 0) {
-                                    DebugLog("[MASTER] Connected to %s!\n", ip.c_str());
+                                    MDC_LOG_INFO(LogTag::NET, "Connection established IP: %s", ip.c_str());
                                     int keepAlive = 1;
                                     setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&keepAlive, sizeof(keepAlive));
                                     
@@ -340,7 +343,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                             }
                                             int timeout = (mySock != sCtx->btFileSock) ? 10000 : 30000;
                                             if (SystemUtils::GetTimeMS() - sCtx->lastFilePongTime.load() > timeout) {
-                                                DebugLog("[MASTER] File TCP Heartbeat timeout!\n");
+                                                MDC_LOG_WARN(LogTag::NET, "File TCP heartbeat timeout");
                                                 if (sCtx->fileSock == mySock) {
                                                     sCtx->tcpFileFailed = true;
                                                     if (mySock != sCtx->btFileSock) {
@@ -366,9 +369,10 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                     
                                     return;
                                 }
+                                MDC_LOG_DEBUG(LogTag::NET, "TCP connect failed to IP: %s", ip.c_str());
                                 closesocket(sock);
                             }
-                            DebugLog("[MASTER] Failed to connect to any IP.\n");
+                            MDC_LOG_WARN(LogTag::NET, "Fail to connect any IP");
                             sCtx->tcpFileFailed = true; 
                         }, ips, port, ctx).detach();
                     }
@@ -378,7 +382,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 if (remaining < 5) break;
                 unsigned int nTaskId; memcpy(&nTaskId, ptr + 1, 4);
                 uint32_t taskId = ntohl(nTaskId);
-                DebugLog("[DEBUG-CANCEL] Network Received Flag 19 (Cancel) for Task %u\n", taskId);
+                MDC_LOG_INFO(LogTag::TRANS, "Network receive Flag 19 cancel for Task %u", taskId);
                 
                 bool isRelay = false;
                 {
@@ -439,7 +443,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 unsigned int nTaskId; memcpy(&nTaskId, ptr + 1, 4);
                 uint32_t taskId = ntohl(nTaskId);
                 bool paused = (ptr[5] == 1);
-                DebugLog("[DEBUG-PAUSE] Network Received Flag 22 (Pause) for Task %u (Paused: %d)\n", taskId, paused);
+                MDC_LOG_INFO(LogTag::TRANS, "Network receive Flag 22 pause for Task %u paused: %d", taskId, paused);
                 
                 bool isRelay = false;
                 {
@@ -502,7 +506,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 ctx->sysProps = std::string(ptr + 5, propsLen);
                 processed += (5 + propsLen);
             } else if (flag == 32) { 
-                DebugLog("[MASTER] Received Flag 32 (NET_LOST). Fallback to BT.\n");
+                MDC_LOG_WARN(LogTag::NET, "Receive Flag 32 net lost fallback to BT");
                 ctx->tcpFileFailed = true;
                 if (ctx->fileSock != INVALID_SOCKET_HANDLE && ctx->fileSock != ctx->btFileSock) {
                     NetUtils::CloseSocket(ctx->fileSock);
@@ -520,7 +524,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 }
                 processed += 1;
             } else if (flag == 33) { 
-                DebugLog("[MASTER] Received Flag 33 (NET_CHANGED). Sending Flag 20 to reconnect.\n");
+                MDC_LOG_INFO(LogTag::NET, "Receive Flag 33 net changed send Flag 20 to reconnect");
                 char pkt = 20;
                 std::lock_guard<std::mutex> lock(ctx->sendLock);
                 send(ctx->sock, &pkt, 1, 0);
@@ -550,6 +554,7 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
 }
 
 void StartReceiverThread(std::shared_ptr<SlaveCtx> ctx) {
+    MDC_LOG_INFO(LogTag::NET, "StartReceiverThread initiated");
     std::thread(ReceiverThreadFunc, ctx).detach(); 
     std::thread(NetworkMonitorThreadFunc, ctx).detach(); 
     if (ctx->fileSock != INVALID_SOCKET_HANDLE) {
@@ -589,7 +594,7 @@ void StartReceiverThread(std::shared_ptr<SlaveCtx> ctx) {
                 }
                 int timeout = (mySock != ctx->btFileSock) ? 10000 : 30000;
                 if (SystemUtils::GetTimeMS() - ctx->lastFilePongTime.load() > timeout) {
-                    DebugLog("[MASTER] File TCP Heartbeat timeout!\n");
+                    MDC_LOG_WARN(LogTag::NET, "File TCP heartbeat timeout");
                     if (ctx->fileSock == mySock) {
                         ctx->tcpFileFailed = true;
                         if (mySock != ctx->btFileSock) {
@@ -616,6 +621,7 @@ void StartReceiverThread(std::shared_ptr<SlaveCtx> ctx) {
 }
 
 void LatencyThread(std::shared_ptr<SlaveCtx> ctx) {
+    MDC_LOG_INFO(LogTag::NET, "StartLatencyThread initiated");
     while (g_Running && ctx->connected && ctx->sock != INVALID_SOCKET_HANDLE) {
         char buffer[5] = { 4 }; 
         uint32_t time = SystemUtils::GetTimeMS();

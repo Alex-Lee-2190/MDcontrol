@@ -1,4 +1,6 @@
 #include "WinCryptoMgr.h"
+#include "Common.h"
+#include "SystemUtils.h"
 #include <windows.h>
 #include <wincrypt.h>
 #include <vector>
@@ -7,9 +9,14 @@ WinCryptoMgr::WinCryptoMgr() {}
 WinCryptoMgr::~WinCryptoMgr() {}
 
 void WinCryptoMgr::GenerateRSAKeys(std::string& pubKey, std::string& privKey) {
+    uint32_t startMs = SystemUtils::GetTimeMS();
+    MDC_LOG_INFO(LogTag::AUTH, "GenerateRSAKeys started");
     HCRYPTPROV hProv = 0;
     HCRYPTKEY hKey = 0;
-    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) return;
+    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptAcquireContextW failed error: %lu", GetLastError());
+        return;
+    }
     CryptGenKey(hProv, AT_KEYEXCHANGE, (1024 << 16) | CRYPT_EXPORTABLE, &hKey);
 
     DWORD dwLen = 0;
@@ -36,21 +43,31 @@ void WinCryptoMgr::GenerateRSAKeys(std::string& pubKey, std::string& privKey) {
 
     CryptDestroyKey(hKey);
     CryptReleaseContext(hProv, 0);
+    MDC_LOG_INFO(LogTag::AUTH, "GenerateRSAKeys completed in %u ms pubLen: %zu privLen: %zu", SystemUtils::GetTimeMS() - startMs, pubKey.length(), privKey.length());
 }
 
 std::string WinCryptoMgr::RSAEncrypt(const std::string& pubKey, const std::string& data) {
     if (pubKey.empty() || data.empty()) return "";
+    uint32_t startMs = SystemUtils::GetTimeMS();
+    MDC_LOG_TRACE(LogTag::AUTH, "RSAEncrypt started input len: %zu", data.length());
 
     DWORD blobLen = 0;
-    if (!CryptStringToBinaryA(pubKey.c_str(), 0, CRYPT_STRING_BASE64_ANY, NULL, &blobLen, NULL, NULL)) return "";
+    if (!CryptStringToBinaryA(pubKey.c_str(), 0, CRYPT_STRING_BASE64_ANY, NULL, &blobLen, NULL, NULL)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptStringToBinaryA failed error: %lu", GetLastError());
+        return "";
+    }
     std::vector<BYTE> blob(blobLen);
     CryptStringToBinaryA(pubKey.c_str(), 0, CRYPT_STRING_BASE64_ANY, blob.data(), &blobLen, NULL, NULL);
 
     HCRYPTPROV hProv = 0;
     HCRYPTKEY hKey = 0;
-    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) return "";
+    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptAcquireContextW failed error: %lu", GetLastError());
+        return "";
+    }
     
     if (!CryptImportKey(hProv, blob.data(), blob.size(), 0, 0, &hKey)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptImportKey failed error: %lu", GetLastError());
         CryptReleaseContext(hProv, 0);
         return "";
     }
@@ -65,6 +82,7 @@ std::string WinCryptoMgr::RSAEncrypt(const std::string& pubKey, const std::strin
     memcpy(buf.data(), data.data(), dataLen);
 
     if (!CryptEncrypt(hKey, 0, TRUE, 0, buf.data(), &dataLen, buf.size())) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptEncrypt failed error: %lu", GetLastError());
         CryptDestroyKey(hKey);
         CryptReleaseContext(hProv, 0);
         return "";
@@ -78,28 +96,39 @@ std::string WinCryptoMgr::RSAEncrypt(const std::string& pubKey, const std::strin
     CryptDestroyKey(hKey);
     CryptReleaseContext(hProv, 0);
 
+    MDC_LOG_TRACE(LogTag::AUTH, "RSAEncrypt completed in %u ms output len: %zu", SystemUtils::GetTimeMS() - startMs, encStr.size() - 1);
     return encStr.data();
 }
 
 std::string WinCryptoMgr::RSADecrypt(const std::string& privKey, const std::string& encData) {
     if (privKey.empty() || encData.empty()) return "";
+    uint32_t startMs = SystemUtils::GetTimeMS();
+    MDC_LOG_TRACE(LogTag::AUTH, "RSADecrypt started input len: %zu", encData.length());
 
     DWORD blobLen = 0;
-    if (!CryptStringToBinaryA(privKey.c_str(), 0, CRYPT_STRING_BASE64_ANY, NULL, &blobLen, NULL, NULL)) return "";
+    if (!CryptStringToBinaryA(privKey.c_str(), 0, CRYPT_STRING_BASE64_ANY, NULL, &blobLen, NULL, NULL)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptStringToBinaryA failed error: %lu", GetLastError());
+        return "";
+    }
     std::vector<BYTE> blob(blobLen);
     CryptStringToBinaryA(privKey.c_str(), 0, CRYPT_STRING_BASE64_ANY, blob.data(), &blobLen, NULL, NULL);
 
     HCRYPTPROV hProv = 0;
     HCRYPTKEY hKey = 0;
-    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) return "";
+    if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptAcquireContextW failed error: %lu", GetLastError());
+        return "";
+    }
     
     if (!CryptImportKey(hProv, blob.data(), blob.size(), 0, 0, &hKey)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptImportKey failed error: %lu", GetLastError());
         CryptReleaseContext(hProv, 0);
         return "";
     }
 
     DWORD dataBlobLen = 0;
     if (!CryptStringToBinaryA(encData.c_str(), 0, CRYPT_STRING_BASE64_ANY, NULL, &dataBlobLen, NULL, NULL) || dataBlobLen == 0) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptStringToBinaryA failed for data error: %lu", GetLastError());
         CryptDestroyKey(hKey);
         CryptReleaseContext(hProv, 0);
         return "";
@@ -109,6 +138,7 @@ std::string WinCryptoMgr::RSADecrypt(const std::string& privKey, const std::stri
 
     DWORD decLen = dataBlobLen;
     if (!CryptDecrypt(hKey, 0, TRUE, 0, dataBlob.data(), &decLen)) {
+        MDC_LOG_ERROR(LogTag::AUTH, "CryptDecrypt failed error: %lu", GetLastError());
         CryptDestroyKey(hKey);
         CryptReleaseContext(hProv, 0);
         return "";
@@ -119,10 +149,12 @@ std::string WinCryptoMgr::RSADecrypt(const std::string& privKey, const std::stri
     CryptDestroyKey(hKey);
     CryptReleaseContext(hProv, 0);
 
+    MDC_LOG_TRACE(LogTag::AUTH, "RSADecrypt completed in %u ms output len: %zu", SystemUtils::GetTimeMS() - startMs, res.length());
     return res;
 }
 
 std::string WinCryptoMgr::GenerateRandomString(int length) {
+    MDC_LOG_TRACE(LogTag::AUTH, "GenerateRandomString requested length: %d", length);
     if (length <= 0) return "";
     HCRYPTPROV hProv = 0;
     if (!CryptAcquireContextW(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) return "";

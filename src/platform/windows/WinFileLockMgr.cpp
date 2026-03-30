@@ -8,6 +8,7 @@ WinFileLockMgr::~WinFileLockMgr() {
 }
 
 void WinFileLockMgr::LockPath(const std::string& path, bool allowWrite) {
+    MDC_LOG_TRACE(LogTag::FILE, "LockPath requested length: %zu allowWrite: %d", path.length(), allowWrite);
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_locks.find(path) != m_locks.end()) return; 
 
@@ -48,29 +49,33 @@ void WinFileLockMgr::LockPath(const std::string& path, bool allowWrite) {
 
         if (hFile != INVALID_HANDLE_VALUE) {
             m_locks[path] = hFile; 
-            DebugLog("[LOCK] Locked path: %s (WriteAllowed: %d)\n", normPath.c_str(), allowWrite);
+            MDC_LOG_DEBUG(LogTag::FILE, "Locked path length: %zu writeAllowed: %d", normPath.length(), allowWrite);
         } else {
-            DebugLog("[LOCK] Failed to lock: %s (Error: %d)\n", normPath.c_str(), GetLastError());
+            MDC_LOG_ERROR(LogTag::FILE, "Failed to lock path length: %zu error: %d", normPath.length(), GetLastError());
         }
     }
 }
 
 void WinFileLockMgr::UnlockPath(const std::string& path) {
+    MDC_LOG_TRACE(LogTag::FILE, "UnlockPath requested length: %zu", path.length());
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_locks.find(path);
     if (it != m_locks.end()) {
         CloseHandle(it->second);
         m_locks.erase(it);
-        DebugLog("[LOCK] Unlocked path: %s\n", path.c_str());
+        MDC_LOG_DEBUG(LogTag::FILE, "Unlocked path length: %zu", path.length());
     }
 }
 
 void WinFileLockMgr::UnlockAll() {
     std::lock_guard<std::mutex> lock(m_mutex);
+    int count = 0;
     for (auto& pair : m_locks) {
         if (pair.second != INVALID_HANDLE_VALUE) {
             CloseHandle(pair.second);
+            count++;
         }
     }
     m_locks.clear();
+    MDC_LOG_INFO(LogTag::FILE, "UnlockAll released %d locks", count);
 }

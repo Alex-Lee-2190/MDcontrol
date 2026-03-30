@@ -27,7 +27,7 @@ void SetMasterDownloadTarget() {
     if (g_MasterTargetBasePath.empty()) {
         g_MasterTargetBasePath = g_FallbackTransferPath;
     }
-    DebugLog("[MASTER] Pre-set Download Target: %s\n", g_MasterTargetBasePath.c_str());
+    MDC_LOG_DEBUG(LogTag::TRANS, "Pre-set download target length: %zu", g_MasterTargetBasePath.length());
 }
 
 static std::wstring ConvertUtf8ToWString(const std::string& str) {
@@ -147,6 +147,7 @@ void MasterSendFileThread(std::shared_ptr<SlaveCtx> ctx, uint32_t taskId, std::v
     if (threadCount < 4) threadCount = 4;
     if (threadCount > 16) threadCount = 16;
     
+    MDC_LOG_INFO(LogTag::TRANS, "Starting file traversal activeThreads: %d", threadCount);
     std::vector<std::thread> workers;
     activeThreads = threadCount;
 
@@ -231,11 +232,13 @@ void MasterSendFileThread(std::shared_ptr<SlaveCtx> ctx, uint32_t taskId, std::v
     for(auto& t : workers) if(t.joinable()) t.join();
     
     if (task->cancelled) {
+        MDC_LOG_INFO(LogTag::TRANS, "File traversal cancelled for task %u", taskId);
         return;
     }
 
     task->serverTransferList = expandedList;
     task->serverTotalSize = totalSizeAtomic.load();
+    MDC_LOG_INFO(LogTag::TRANS, "File traversal complete for task %u total files: %zu total bytes: %llu", taskId, task->serverTransferList.size(), task->serverTotalSize);
 
     if (g_MainObject && !task->serverTransferList.empty()) {
         QCoreApplication::postEvent(g_MainObject, new FileTransferStartEvent(taskId, QString::fromStdString(task->deviceName), QString::fromStdString(task->targetPath), task->serverTotalSize, (int)task->serverTransferList.size()));
@@ -467,8 +470,13 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                 double tokens = currentRate;
 
                                 while (true) {
-                                    if (task->cancelled || task->senderSession != mySession) { DebugLog("[DEBUG-CANCEL] Sender loop aborted for Task %u\n", taskId); break; }
-                                    if (task->paused) DebugLog("[DEBUG-PAUSE] Sender loop entering pause state for Task %u\n", taskId);
+                                    if (task->cancelled || task->senderSession != mySession) { 
+                                        MDC_LOG_INFO(LogTag::TRANS, "Sender loop aborted task: %u", taskId);
+                                        break; 
+                                    }
+                                    if (task->paused) {
+                                        MDC_LOG_INFO(LogTag::TRANS, "Sender loop entering pause state task: %u", taskId);
+                                    }
                                     while (task->paused && g_Running && !task->cancelled && task->senderSession == mySession) {
                                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                                         lastTokenTime = std::chrono::high_resolution_clock::now();
@@ -487,6 +495,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                         } else if (currentLatency < 40) {
                                             currentRate = std::min(1024.0 * 50.0, currentRate + 2048.0);
                                         }
+                                        MDC_LOG_TRACE(LogTag::TRANS, "Bluetooth throttling active currentRate: %.2f latency: %u", currentRate, currentLatency);
                                         auto now = std::chrono::high_resolution_clock::now();
                                         double dt = std::chrono::duration<double>(now - lastTokenTime).count();
                                         lastTokenTime = now;
@@ -542,7 +551,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                         if (task->senderSession == mySession) {
                             if (fileIdx == (int)task->serverTransferList.size() - 1 || task->cancelled) {
                                 if (!task->cancelled) {
-                                    DebugLog("[DEBUG-HASH] Master Sender reached fileIdx %d / %d. Triggering Hash Test S.\n", fileIdx, (int)task->serverTransferList.size() - 1);
+                                    MDC_LOG_INFO(LogTag::TRANS, "Sender file list depleted index %d trigger hash test S", fileIdx);
                                     
                                     std::string testFile = "hash_test_target_S_" + std::to_string(taskId) + ".txt";
                                     
@@ -781,7 +790,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                         
                                         uint32_t now = SystemUtils::GetTimeMS();
                                         if (now - task->lastActiveTime > 3000) {
-                                            DebugLog("[WATCHDOG] Task %u stalled! Retriggering request for file %d...\n", taskId, task->currentFileIdx.load());
+                                            MDC_LOG_WARN(LogTag::TRANS, "Task %u stalled triggering recovery", taskId);
                                             task->lastActiveTime = now;
                                             task->recoveryRequested = false;
                                             
@@ -813,6 +822,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                         };
 
                         if (duplicateCount > 0 && !task->cancelled) {
+                            MDC_LOG_INFO(LogTag::TRANS, "Duplicate files detected count: %d task: %u", duplicateCount, taskId);
                             task->pendingDuplicateIndices = duplicateIndices;
                             
                             std::vector<char> dupPkt;
@@ -1043,6 +1053,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                     if (g_TransferTasks.count(taskId)) task = g_TransferTasks[taskId];
                 }
                 if (task && !task->cancelled) {
+                    MDC_LOG_INFO(LogTag::TRANS, "Decision made skip files count: %d task: %u", (int)skipped.size(), taskId);
                     task->skippedFiles = skipped;
                     for (int idx : task->skippedFiles) {
                         if (idx < task->activeTransferList.size()) {
@@ -1141,6 +1152,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                         }
                     } else {
                         if (!task->recoveryRequested.exchange(true)) {
+                            MDC_LOG_INFO(LogTag::TRANS, "Chunk offset mismatch task: %u offset: %llu current recv size: %llu requesting recovery", taskId, chunkOffset, currentRecvSize);
                             task->lastActiveTime = SystemUtils::GetTimeMS();
                             char reqPkt[17]; 
                             reqPkt[0] = 13; 
@@ -1215,6 +1227,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                         if (currentRecvSize < expectedSize) {
                             transferComplete = false;
                             if (!task->recoveryRequested.exchange(true)) {
+                                MDC_LOG_INFO(LogTag::TRANS, "File incomplete size mismatch task: %u offset: %llu expected: %llu requesting recovery", taskId, currentRecvSize, expectedSize);
                                 task->lastActiveTime = SystemUtils::GetTimeMS();
                                 char reqPkt[17]; 
                                 reqPkt[0] = 13; 
@@ -1266,11 +1279,11 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                     }
                     
                     if (transferComplete) {
-                        DebugLog("[DEBUG-HASH] Master received Flag 15 for Task %u. Files: %d / %d\n", taskId, task->filesReceived.load()+1, task->totalFilesToReceive);
+                        MDC_LOG_DEBUG(LogTag::TRANS, "Master received file completion Flag 15 for task %u files: %d of %d", taskId, task->filesReceived.load()+1, task->totalFilesToReceive);
                         task->filesReceived++;
                         
                         if (task->filesReceived == task->totalFilesToReceive) {
-                            DebugLog("[DEBUG-HASH] Triggering Receiver Hash Test on Master for Task %u\n", taskId);
+                            MDC_LOG_DEBUG(LogTag::TRANS, "Trigger receiver hash test on master for task %u", taskId);
                             {
                                 SocketHandle targetSock = ctx->fileSock;
                                 bool useBt = targetSock != INVALID_SOCKET_HANDLE && SystemUtils::IsBluetoothSocket(targetSock);

@@ -24,7 +24,7 @@ void SlaveSendClipboard(const std::string& text_utf8) {
 
 void SlaveSendFileClipboard(const std::vector<std::string>& paths) {
     if (g_ClientSock == INVALID_SOCKET_HANDLE) return;
-    DebugLog("[SLAVE] SlaveSendFileClipboard called with %d paths\n", (int)paths.size());
+    MDC_LOG_INFO(LogTag::TRANS, "SlaveSendFileClipboard called with %d paths", (int)paths.size());
     
     std::vector<char> pkt;
     pkt.push_back(12); 
@@ -48,7 +48,7 @@ void SlaveSendFileClipboard(const std::vector<std::string>& paths) {
                 }
                 
                 g_LastCopiedFiles.push_back({netName, size, absPath});
-                DebugLog("[SLAVE] Adding ROOT: %s\n", absPath.c_str());
+                MDC_LOG_DEBUG(LogTag::TRANS, "Add root path length: %zu", absPath.length());
             } catch (...) {}
         }
 

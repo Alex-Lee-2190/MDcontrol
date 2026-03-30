@@ -14,7 +14,10 @@ void NetworkReceiver() {
 
     while (g_Running && g_ClientSock != INVALID_SOCKET_HANDLE) {
         int ret = recv(g_ClientSock, buffer.data() + offset, buffer.size() - offset, 0);
-        if (ret <= 0) break;
+        if (ret <= 0) {
+            MDC_LOG_INFO(LogTag::NET, "NetworkReceiver loop exited recv ret: %d", ret);
+            break;
+        }
         int total = offset + ret;
         int processed = 0;
 
@@ -47,7 +50,7 @@ void NetworkReceiver() {
                             QMetaObject::invokeMethod(g_MainObject,[](){ UpdateUI(); });
                         }
                     } else if (type == 8) { 
-                        DebugLog("[SLAVE] Paste Event (Flag 8). Requesting Manifest (Flag 16)...\n");
+                        MDC_LOG_INFO(LogTag::TRANS, "Paste event Flag 8 request manifest Flag 16");
                         
                         std::string targetPath = SystemUtils::GetCurrentExplorerPath();
                         if (targetPath.empty()) targetPath = g_FallbackTransferPath;
@@ -195,7 +198,7 @@ void NetworkReceiver() {
                 g_HasFileUpdate = true;
                 unsigned int numFiles; memcpy(&numFiles, ptr+1, 4);
                 int fileCount = ntohl(numFiles);
-                DebugLog("[SLAVE] Received Root File Info (Flag 12): %d roots\n", fileCount);
+                MDC_LOG_INFO(LogTag::TRANS, "Receive Root file info Flag 12 roots: %d", fileCount);
                 
                 {
                     std::lock_guard<std::mutex> lock(g_FileClipMutex);
@@ -216,7 +219,7 @@ void NetworkReceiver() {
                         currentOffset += 8;
                         infos.push_back({name, ntohll(netSize), ""}); 
                         g_ReceivedRoots.push_back(name); 
-                        DebugLog("[SLAVE] Root[%d]: %s\n", i, name.c_str());
+                        MDC_LOG_DEBUG(LogTag::TRANS, "Root index %d received name length: %zu", i, name.length());
                     }
                     if (safe) {
                         g_LastCopiedFiles = infos; 
@@ -230,7 +233,7 @@ void NetworkReceiver() {
             }
             else if (flag == 20) { 
                 processed += 1;
-                DebugLog("[SLAVE] Received TCP Handshake Request (Flag 20). Starting Listener.\n");
+                MDC_LOG_INFO(LogTag::NET, "Receive TCP handshake request Flag 20 start listener");
 
                 std::thread([](){
                     if (!SystemUtils::HasNetworkConnectivity()) {
@@ -244,7 +247,7 @@ void NetworkReceiver() {
                         if (g_ClientSock != INVALID_SOCKET_HANDLE) {
                             send(g_ClientSock, pkt.data(), pkt.size(), 0);
                         }
-                        DebugLog("[SLAVE] No network connectivity. Rejected TCP Handshake.\n");
+                        MDC_LOG_WARN(LogTag::NET, "No network connectivity reject TCP handshake");
                         return;
                     }
 
@@ -255,14 +258,17 @@ void NetworkReceiver() {
                     addr.sin_port = 0; 
                     
                     if (bind(s, (SOCKADDR*)&addr, sizeof(addr)) != 0) {
+                        MDC_LOG_ERROR(LogTag::NET, "TCP bind failed");
                         closesocket(s); return;
                     }
                     if (listen(s, 1) != 0) {
+                        MDC_LOG_ERROR(LogTag::NET, "TCP listen failed");
                         closesocket(s); return;
                     }
                     
                     int len = sizeof(addr);
                     if (getsockname(s, (SOCKADDR*)&addr, &len) != 0) {
+                        MDC_LOG_ERROR(LogTag::NET, "TCP getsockname failed");
                         closesocket(s); return;
                     }
                     int port = ntohs(addr.sin_port);
@@ -293,7 +299,7 @@ void NetworkReceiver() {
                     closesocket(s); 
                     
                     if (client != INVALID_SOCKET) {
-                        DebugLog("[SLAVE] TCP Handshake Successful on Port %d.\n", port);
+                        MDC_LOG_INFO(LogTag::NET, "TCP handshake success port %d", port);
                         
                         SocketHandle oldFileSock = g_ClientFileSock;
                         g_ClientFileSock = (SocketHandle)client;
@@ -310,7 +316,7 @@ void NetworkReceiver() {
                             while (g_Running && g_ClientFileSock == mySock && mySock != INVALID_SOCKET_HANDLE) {
                                 int timeout = (mySock != g_ClientBtFileSock) ? 10000 : 15000;
                                 if (SystemUtils::GetTimeMS() - g_LastFilePingTime.load() > timeout) {
-                                    DebugLog("[SLAVE] File TCP Heartbeat timeout!\n");
+                                    MDC_LOG_WARN(LogTag::NET, "File TCP heartbeat timeout");
                                     if (g_ClientFileSock == mySock) {
                                         if (mySock != g_ClientBtFileSock) {
                                             NetUtils::CloseSocket(mySock);
@@ -333,14 +339,14 @@ void NetworkReceiver() {
                             }
                         }).detach();
                     } else {
-                        DebugLog("[SLAVE] TCP Handshake Accept Failed.\n");
+                        MDC_LOG_ERROR(LogTag::NET, "TCP handshake accept fail");
                     }
                 }).detach();
             } else if (flag == 19) { 
                 if (remaining < 5) break;
                 unsigned int nTaskId; memcpy(&nTaskId, ptr + 1, 4);
                 uint32_t taskId = ntohl(nTaskId);
-                DebugLog("[DEBUG-CANCEL] Network Received Flag 19 (Cancel) for Task %u\n", taskId);
+                MDC_LOG_INFO(LogTag::TRANS, "Network receive Flag 19 cancel for Task %u", taskId);
                 
                 std::shared_ptr<FileTransferTask> task;
                 {
@@ -364,7 +370,7 @@ void NetworkReceiver() {
                 unsigned int nTaskId; memcpy(&nTaskId, ptr + 1, 4);
                 uint32_t taskId = ntohl(nTaskId);
                 bool paused = (ptr[5] == 1);
-                DebugLog("[DEBUG-PAUSE] Network Received Flag 22 (Pause) for Task %u (Paused: %d)\n", taskId, paused);
+                MDC_LOG_INFO(LogTag::TRANS, "Network receive Flag 22 pause for Task %u paused: %d", taskId, paused);
                 
                 std::shared_ptr<FileTransferTask> task;
                 {
@@ -389,7 +395,7 @@ void NetworkReceiver() {
                 g_Latency = ntohl(nLat);
                 processed += 5;
             } else if (flag == 32) { 
-                DebugLog("[SLAVE] Received Flag 32 (NET_LOST). Fallback to BT.\n");
+                MDC_LOG_WARN(LogTag::NET, "Receive Flag 32 net lost fallback to BT");
                 if (g_ClientFileSock != INVALID_SOCKET_HANDLE && g_ClientFileSock != g_ClientBtFileSock) {
                     NetUtils::CloseSocket(g_ClientFileSock);
                     g_ClientFileSock = g_ClientBtFileSock;
@@ -435,7 +441,7 @@ void SlaveNetworkMonitorThreadFunc() {
                 std::lock_guard<std::mutex> lock(g_SockLock);
                 if (g_ClientSock != INVALID_SOCKET_HANDLE) send(g_ClientSock, &pkt, 1, 0);
             }
-            DebugLog("[SLAVE] Network Lost! Sending Flag 32 and fallback to BT.\n");
+            MDC_LOG_WARN(LogTag::NET, "Network disconnected send Flag 32 and fallback to BT");
             if (g_ClientFileSock != INVALID_SOCKET_HANDLE && g_ClientFileSock != g_ClientBtFileSock) {
                 NetUtils::CloseSocket(g_ClientFileSock);
                 g_ClientFileSock = g_ClientBtFileSock;
@@ -456,7 +462,7 @@ void SlaveNetworkMonitorThreadFunc() {
                 std::lock_guard<std::mutex> lock(g_SockLock);
                 if (g_ClientSock != INVALID_SOCKET_HANDLE) send(g_ClientSock, &pkt, 1, 0);
             }
-            DebugLog("[SLAVE] Network Recovered/Changed! Sending Flag 33.\n");
+            MDC_LOG_INFO(LogTag::NET, "Network state changed send Flag 33");
         }
         
         lastHasNet = currentHasNet;
@@ -478,7 +484,7 @@ void StartNetworkReceiverThread() {
             while (g_Running && g_ClientFileSock == mySock && mySock != INVALID_SOCKET_HANDLE) {
                 int timeout = (mySock != g_ClientBtFileSock) ? 10000 : 15000;
                 if (SystemUtils::GetTimeMS() - g_LastFilePingTime.load() > timeout) {
-                    DebugLog("[SLAVE] File TCP Heartbeat timeout!\n");
+                    MDC_LOG_WARN(LogTag::NET, "File TCP heartbeat timeout");
                     if (g_ClientFileSock == mySock) {
                         if (mySock != g_ClientBtFileSock) {
                             NetUtils::CloseSocket(mySock);

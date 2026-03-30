@@ -55,7 +55,7 @@ void MasterSendClipboard(const std::string& text) {
 }
 
 void MasterSendFileClipboard(const std::vector<std::string>& paths) {
-    DebugLog("[MASTER] MasterSendFileClipboard called with %d paths\n", (int)paths.size());
+    MDC_LOG_INFO(LogTag::TRANS, "MasterSendFileClipboard called with %d paths", (int)paths.size());
     g_HasFileUpdate = true;
     g_RemoteFilesAvailable = false; // Force revoke remote file lock
     g_RemoteFileSource.reset();     // Clear outdated source pointer
@@ -81,7 +81,7 @@ void MasterSendFileClipboard(const std::vector<std::string>& paths) {
                 }
                 
                 g_LastCopiedFiles.push_back({netName, size, absPath});
-                DebugLog("[MASTER] Adding ROOT: %s\n", absPath.c_str());
+                MDC_LOG_DEBUG(LogTag::TRANS, "Add root path length: %zu", absPath.length());
             } catch (...) {}
         }
 

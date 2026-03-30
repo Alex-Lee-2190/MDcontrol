@@ -34,6 +34,7 @@ void SenderThread() {
             bool displayChanged = (active != last_active || locked != last_locked || curTx != last_tx || curTy != last_ty || px != last_px || py != last_py);
 
             if (displayChanged) { 
+                MDC_LOG_TRACE(LogTag::KVM, "Display state changed active:%d locked:%d tx:%d ty:%d px:%d py:%d", active, locked, curTx, curTy, px, py);
                 last_active = active;
                 last_locked = locked;
                 last_tx = curTx;
@@ -121,6 +122,7 @@ void SenderThread() {
                 std::string currentTopoStr(topoBuf.begin(), topoBuf.end());
                 for (auto& s : snapshot) {
                     if (s->lastSentTopo != currentTopoStr) {
+                        MDC_LOG_INFO(LogTag::KVM, "Topology changed sending update to device %s length: %zu", s->name.c_str(), topoBuf.size());
                         std::lock_guard<std::mutex> netLock(s->sendLock);
                         send(s->sock, topoBuf.data(), (int)topoBuf.size(), 0);
                         s->lastSentTopo = currentTopoStr;
@@ -168,8 +170,13 @@ void SenderThread() {
         }
 
         std::vector<InputPkt> eventsToSend;
+        size_t queueSize = 0;
         {
             std::lock_guard<std::mutex> qLock(g_InputQueueLock);
+            queueSize = g_InputQueue.size();
+            if (queueSize > 10) {
+                MDC_LOG_WARN(LogTag::KVM, "Input queue accumulating size: %zu", queueSize);
+            }
             while (!g_InputQueue.empty()) {
                 eventsToSend.push_back(g_InputQueue.front());
                 g_InputQueue.pop();
@@ -190,6 +197,7 @@ void SenderThread() {
                     memcpy(posBuffer + 1, &nx, 4); memcpy(posBuffer + 5, &ny, 4);
                     std::lock_guard<std::mutex> netLock(ctx->sendLock);
                     if (!NetUtils::SendAll(ctx->sock, posBuffer, 9)) {
+                        MDC_LOG_ERROR(LogTag::KVM, "Failed to send posBuffer slave %s disconnected", ctx->name.c_str());
                         ctx->connected = false;
                     }
                 }
@@ -215,6 +223,7 @@ void SenderThread() {
                             if (ctx && ctx->sock != INVALID_SOCKET_HANDLE) {
                                 std::lock_guard<std::mutex> netLock(ctx->sendLock);
                                 if (!NetUtils::SendAll(ctx->sock, batch.data(), batch.size())) {
+                                    MDC_LOG_ERROR(LogTag::KVM, "Failed to send input batch slave %s disconnected", ctx->name.c_str());
                                     ctx->connected = false;
                                 }
                             }

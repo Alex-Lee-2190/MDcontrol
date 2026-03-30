@@ -29,6 +29,9 @@ namespace SystemUtils {
     // Get system UI language ("zh", "en", etc.)
     std::string GetSystemLanguage();
 
+    // Get current thread ID
+    uint32_t GetCurrentThreadId();
+
     // Get system time in milliseconds
     uint32_t GetTimeMS();
 

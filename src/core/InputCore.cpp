@@ -22,6 +22,7 @@ RectD GetLogicalRect(std::shared_ptr<SlaveCtx> ctx) {
 }
 
 bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
+    MDC_LOG_TRACE(LogTag::KVM, "ProcessMouse x:%d y:%d type:%d data:%d", x, y, type, data);
     uint32_t now = SystemUtils::GetTimeMS();
 
     if (g_IsRemote) {
@@ -50,7 +51,7 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
 
             // 丢弃异常的跳变增量
             if (std::abs(dx) > g_LocalW / 3 || std::abs(dy) > g_LocalH / 3) {
-                DebugLog("[INPUT-WARN] Ignored huge jump dx: %d, dy: %d\n", dx, dy);
+                MDC_LOG_WARN(LogTag::KVM, "Huge jump ignored dx: %d dy: %d", dx, dy);
                 dx = 0;
                 dy = 0;
             }
@@ -69,7 +70,7 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                 bool outOfBounds = !myRect.contains(newAbsX, newAbsY);
                 
                 if (outOfBounds && !g_Locked && (now - g_LastSwitchTime > 300)) {
-                    DebugLog("[INPUT-TRANS] outOfBounds! myRect(x:%.1f, y:%.1f, w:%.1f, h:%.1f), newAbsX: %.1f, newAbsY: %.1f\n", 
+                    MDC_LOG_DEBUG(LogTag::KVM, "Out of bounds myRect x:%.1f y:%.1f w:%.1f h:%.1f newAbsX: %.1f newAbsY: %.1f", 
                         myRect.x, myRect.y, myRect.w, myRect.h, newAbsX, newAbsY);
 
                     int newDeviceIdx = -2; 
@@ -102,7 +103,7 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                             if (wx < 0) wx = 0; if (wx >= g_LocalW) wx = g_LocalW - 1;
                             if (wy < 0) wy = 0; if (wy >= g_LocalH) wy = g_LocalH - 1;
                             
-                            DebugLog("[INPUT-TRANS] Switching to Master. wx: %d, wy: %d\n", wx, wy);
+                            MDC_LOG_INFO(LogTag::KVM, "Switch to Master wx: %d wy: %d", wx, wy);
                             SystemUtils::SetCursorPos(wx, wy);
                         } else {
                             std::shared_ptr<SlaveCtx> newCtx;
@@ -117,13 +118,13 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                                 g_CurTx = (int)std::round((newAbsX - newRect.x) * newCtx->scale);
                                 g_CurTy = (int)std::round((newAbsY - newRect.y) * newCtx->scale);
                                 
-                                DebugLog("[INPUT-TRANS] Switching to Slave %d. newRect(x:%.1f, y:%.1f), BeforeClamp_Tx: %d, BeforeClamp_Ty: %d\n", 
+                                MDC_LOG_DEBUG(LogTag::KVM, "Switch to Slave %d newRect x:%.1f y:%.1f BeforeClamp_Tx: %d BeforeClamp_Ty: %d", 
                                     newDeviceIdx, newRect.x, newRect.y, g_CurTx.load(), g_CurTy.load());
 
                                 if (g_CurTx < 0) g_CurTx = 0; if (g_CurTx >= newCtx->width) g_CurTx = newCtx->width - 1;
                                 if (g_CurTy < 0) g_CurTy = 0; if (g_CurTy >= newCtx->height) g_CurTy = newCtx->height - 1;
                                 
-                                DebugLog("[INPUT-TRANS] AfterClamp_Tx: %d, AfterClamp_Ty: %d, targetWidth: %d\n", 
+                                MDC_LOG_DEBUG(LogTag::KVM, "AfterClamp_Tx: %d AfterClamp_Ty: %d targetWidth: %d", 
                                     g_CurTx.load(), g_CurTy.load(), newCtx->width);
 
                                 SendEvent(7, 1, 0, newDeviceIdx); 
@@ -136,7 +137,7 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                         UpdateUI();
                         return true;
                     } else {
-                        DebugLog("[INPUT-TRANS] outOfBounds but no adjacent device found. Clamping to edge.\n");
+                        MDC_LOG_DEBUG(LogTag::KVM, "Out of bounds but no adjacent device found clamp to edge");
                     }
                 }
                 
@@ -188,7 +189,7 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                     
                     RectD r = GetLogicalRect(ctx);
                     if (r.contains(testX, testY)) {
-                        DebugLog("[INPUT-TRANS] Master boundary breached! Switching to Slave %d. testX: %.1f, testY: %.1f, targetRect(x:%.1f, y:%.1f)\n", 
+                        MDC_LOG_INFO(LogTag::KVM, "Master boundary breached Switch to Slave %d testX: %.1f testY: %.1f targetRect x:%.1f y:%.1f", 
                             i, testX, testY, r.x, r.y);
 
                         g_IsRemote = true;
@@ -198,12 +199,12 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
                         g_CurTx = (int)std::round((testX - r.x) * ctx->scale);
                         g_CurTy = (int)std::round((testY - r.y) * ctx->scale);
 
-                        DebugLog("[INPUT-TRANS] BeforeClamp_Tx: %d, BeforeClamp_Ty: %d\n", g_CurTx.load(), g_CurTy.load());
+                        MDC_LOG_DEBUG(LogTag::KVM, "BeforeClamp_Tx: %d BeforeClamp_Ty: %d", g_CurTx.load(), g_CurTy.load());
 
                         if (g_CurTx < 0) g_CurTx = 0; if (g_CurTx >= ctx->width) g_CurTx = ctx->width - 1;
                         if (g_CurTy < 0) g_CurTy = 0; if (g_CurTy >= ctx->height) g_CurTy = ctx->height - 1;
                         
-                        DebugLog("[INPUT-TRANS] AfterClamp_Tx: %d, AfterClamp_Ty: %d\n", g_CurTx.load(), g_CurTy.load());
+                        MDC_LOG_DEBUG(LogTag::KVM, "AfterClamp_Tx: %d AfterClamp_Ty: %d", g_CurTx.load(), g_CurTy.load());
 
                         SendEvent(7, 1, 0, (int)i);
                         g_HasUpdate = true;
@@ -220,6 +221,7 @@ bool InputCore::ProcessMouse(int x, int y, MouseEventType type, int data) {
 }
 
 bool InputCore::ProcessKey(int vk, int scan, bool down, bool sys) {
+    MDC_LOG_TRACE(LogTag::KVM, "ProcessKey vk:%d scan:%d down:%d sys:%d", vk, scan, down, sys);
     if (vk >= 0 && vk < 256) {
         if (vk == 0x11 || vk == 0xA2 || vk == 0xA3) m_ctrlDown = down;
         if (vk == 0x12 || vk == 0xA4 || vk == 0xA5) m_altDown = down;
@@ -300,7 +302,7 @@ bool InputCore::ProcessKey(int vk, int scan, bool down, bool sys) {
                             return true; 
                         }
                     }
-                    DebugLog("[INPUT] Triggering File Paste Event (Type 8)\n");
+                    MDC_LOG_INFO(LogTag::KVM, "Trigger file paste event Type 8");
                     g_HasFileUpdate = false; 
                     SendEvent(8, 0, 0, g_ActiveSlaveIdx.load()); 
                     return true; 
@@ -312,7 +314,7 @@ bool InputCore::ProcessKey(int vk, int scan, bool down, bool sys) {
     } else {
         if (vk == 0x56 && down) { 
             if (m_ctrlDown && g_RemoteFilesAvailable) {
-                DebugLog("[INPUT] Local 'V' pressed. Triggering Remote File Download (Async).\n");
+                MDC_LOG_INFO(LogTag::KVM, "Local V pressed trigger remote file download async");
                 if (g_MainObject) QCoreApplication::postEvent(g_MainObject, new PrepareFileDownloadEvent());
                 return true; 
             }

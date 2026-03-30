@@ -8,6 +8,9 @@
 #include <QtWidgets/QApplication>
 #include <QtCore/QSettings>
 #include <vector>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 // Global variables
 
@@ -18,6 +21,7 @@ std::mutex g_SockLock;
 std::atomic<bool> g_IgnoreClipUpdate(false);
 std::string g_LastClipText = ""; 
 
+int g_LogLevel = 1;
 bool g_LogToFile = true;
 std::string g_FallbackTransferPath = "C:\\Users\\Public\\Downloads";
 bool g_RememberPos = true;
@@ -101,26 +105,166 @@ std::mutex g_ClientFileSendLock;
 std::atomic<bool> g_IsBluetoothConn(false); 
 std::atomic<uint32_t> g_LastFilePingTime(0); 
 
-void DebugLog(const char* format, ...) {
-    char buffer[1024];
+// --- Logger Implementation ---
+std::queue<std::string> g_LogQueue;
+std::mutex g_LogMutex;
+std::condition_variable g_LogCond;
+std::thread g_LogThread;
+std::atomic<bool> g_LogRunning(false);
+
+static std::string GetCurrentTimestampString() {
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    std::tm bt = {};
+#ifdef _WIN32
+    localtime_s(&bt, &timer);
+#else
+    localtime_r(&timer, &bt);
+#endif
+    std::ostringstream oss;
+    oss << std::put_time(&bt, "%Y-%m-%d %H:%M:%S");
+    oss << '.' << std::setfill('0') << std::setw(3) << ms.count();
+    return oss.str();
+}
+
+static std::string ExtractFileName(const char* path) {
+    std::string s(path);
+    size_t pos = s.find_last_of("\\/");
+    if (pos != std::string::npos) s = s.substr(pos + 1);
+    size_t ext = s.find_last_of(".");
+    if (ext != std::string::npos) s = s.substr(0, ext);
+    return s;
+}
+
+void LogWorkerThread() {
+    while (g_LogRunning) {
+        std::string msg;
+        {
+            std::unique_lock<std::mutex> lock(g_LogMutex);
+            g_LogCond.wait(lock, [] { return !g_LogQueue.empty() || !g_LogRunning; });
+            if (!g_LogRunning && g_LogQueue.empty()) break;
+            if (!g_LogQueue.empty()) {
+                msg = g_LogQueue.front();
+                g_LogQueue.pop();
+            }
+        }
+        if (!msg.empty()) {
+#ifdef _WIN32
+            OutputDebugStringA(msg.c_str());
+#else
+            printf("%s", msg.c_str());
+#endif
+            if (g_LogToFile) {
+                SystemUtils::WriteLog(msg);
+            }
+        }
+    }
+}
+
+void InitLogger() {
+    if (g_LogRunning) return;
+    g_LogRunning = true;
+    g_LogThread = std::thread(LogWorkerThread);
+}
+
+void ShutdownLogger() {
+    if (!g_LogRunning) return;
+    g_LogRunning = false;
+    g_LogCond.notify_all();
+    if (g_LogThread.joinable()) {
+        g_LogThread.join();
+    }
+}
+
+void AsyncLogImpl(LogLevel level, LogTag tag, const char* file, const char* format, ...) {
+    if (static_cast<int>(level) < g_LogLevel) return;
+
+    std::string levelStr;
+    switch(level) {
+        case LogLevel::TRACE: levelStr = "TRACE"; break;
+        case LogLevel::DEBUG: levelStr = "DEBUG"; break;
+        case LogLevel::INFO:  levelStr = "INFO "; break;
+        case LogLevel::WARN:  levelStr = "WARN "; break;
+        case LogLevel::ERR:   levelStr = "ERROR"; break;
+    }
+    std::string tagStr;
+    switch(tag) {
+        case LogTag::SYS: tagStr = "SYS"; break;
+        case LogTag::NET: tagStr = "NET"; break;
+        case LogTag::BTH: tagStr = "BTH"; break;
+        case LogTag::AUTH: tagStr = "AUTH"; break;
+        case LogTag::KVM: tagStr = "KVM"; break;
+        case LogTag::FILE: tagStr = "FILE"; break;
+        case LogTag::TRANS: tagStr = "TRANS"; break;
+        case LogTag::UI: tagStr = "UI"; break;
+        case LogTag::LEGACY: tagStr = "LEGACY"; break;
+        default: tagStr = "UNK"; break;
+    }
+
+    char buffer[4096];
     va_list args;
     va_start(args, format);
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
 
-#ifdef _WIN32
-    OutputDebugStringA(buffer);
-#else
-    printf("%s", buffer);
-#endif
+    std::string msgStr(buffer);
+    if (!msgStr.empty() && msgStr.back() == '\n') {
+        msgStr.pop_back();
+    }
 
-    if (g_LogToFile) {
-        SystemUtils::WriteLog(buffer);
+    std::ostringstream oss;
+    oss << "[" << GetCurrentTimestampString() << "] "
+        << "[T-" << SystemUtils::GetCurrentThreadId() << "] "
+        << "[" << levelStr << "] "
+        << "[" << tagStr << "] "
+        << "<" << ExtractFileName(file) << "> "
+        << msgStr << "\n";
+
+    {
+        std::lock_guard<std::mutex> lock(g_LogMutex);
+        g_LogQueue.push(oss.str());
+    }
+    g_LogCond.notify_one();
+}
+
+void DebugLog(const char* format, ...) {
+    char buffer[4096];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
+    AsyncLogImpl(LogLevel::DEBUG, LogTag::LEGACY, "Legacy", "%s", buffer);
+}
+
+void QtLogMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& msg) {
+    std::string localMsg = msg.toStdString();
+    const char* file = context.file ? context.file : "Qt";
+    switch (type) {
+        case QtDebugMsg:
+            AsyncLogImpl(LogLevel::DEBUG, LogTag::UI, file, "%s", localMsg.c_str());
+            break;
+        case QtInfoMsg:
+            AsyncLogImpl(LogLevel::INFO, LogTag::UI, file, "%s", localMsg.c_str());
+            break;
+        case QtWarningMsg:
+            AsyncLogImpl(LogLevel::WARN, LogTag::UI, file, "%s", localMsg.c_str());
+            break;
+        case QtCriticalMsg:
+        case QtFatalMsg:
+            AsyncLogImpl(LogLevel::ERR, LogTag::UI, file, "%s", localMsg.c_str());
+            break;
     }
 }
 
 int main(int argc, char *argv[]) {
+    InitLogger();
+    qInstallMessageHandler(QtLogMessageHandler);
+    MDC_LOG_INFO(LogTag::SYS, "Application starting");
+
     if (!NetUtils::InitNetwork()) {
+        MDC_LOG_ERROR(LogTag::SYS, "Network initialization failed");
         SystemUtils::ShowErrorMessage("Error", "Network Init Failed");
         return -1;
     }
@@ -137,12 +281,15 @@ int main(int argc, char *argv[]) {
     g_MyName = SystemUtils::GetComputerNameStr();
     g_MySysProps = SystemUtils::GetSystemProperties();
 
+    MDC_LOG_INFO(LogTag::SYS, "Settings loaded language: %d", g_Language);
+
     QApplication app(argc, argv);
 
     app.setWindowIcon(IconDrawer::getAppIcon());
 
     g_FallbackTransferPath = settings.value("FallbackPath", "C:\\Users\\Public\\Downloads").toString().toStdString();
     g_LogToFile = settings.value("LogToFile", true).toBool();
+    g_LogLevel = settings.value("LogLevel", 1).toInt();
     g_RememberPos = settings.value("RememberPos", true).toBool();
 
     g_HkToggleMod = settings.value("HkToggle_Mod", 0).toInt();
@@ -161,18 +308,26 @@ int main(int argc, char *argv[]) {
         g_Context->CryptoMgr->GenerateRSAKeys(g_MyPubKey, g_MyPrivKey);
         authSettings.setValue("PubKey", QString::fromStdString(g_MyPubKey));
         authSettings.setValue("PrivKey", QString::fromStdString(g_MyPrivKey));
+        MDC_LOG_INFO(LogTag::AUTH, "New RSA keys generated and saved");
+    } else {
+        MDC_LOG_INFO(LogTag::AUTH, "RSA keys loaded");
     }
 
     SystemUtils::InitDPI();
     g_LocalScale = SystemUtils::GetDPIScale();
     SystemUtils::GetScreenSize(g_LocalW, g_LocalH);
+    MDC_LOG_INFO(LogTag::SYS, "Display initialized scale: %.2f resolution: %dx%d", g_LocalScale, g_LocalW, g_LocalH);
 
     ControlWindow w;
     w.show();
+    MDC_LOG_INFO(LogTag::UI, "Main window shown");
 
     if (g_Context->InputListener) g_Context->InputListener->Start();
 
+    MDC_LOG_INFO(LogTag::SYS, "Entering main event loop");
     int ret = app.exec();
+
+    MDC_LOG_INFO(LogTag::SYS, "Exiting main event loop initiating cleanup");
 
     g_Running = false;
     g_ClipboardCond.notify_all(); 
@@ -196,5 +351,8 @@ int main(int argc, char *argv[]) {
     
     delete g_Context; g_Context = nullptr;
     NetUtils::CleanupNetwork();
+    
+    MDC_LOG_INFO(LogTag::SYS, "Application exit code: %d", ret);
+    ShutdownLogger();
     return ret;
 }

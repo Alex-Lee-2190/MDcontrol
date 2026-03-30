@@ -21,6 +21,7 @@ namespace IconDrawer {
     
     QIcon getBtDeviceIcon(bool isHistory, bool isPaired);
     QIcon getDeleteIcon();
+    QIcon getTransferPauseIcon(bool isPaused);
     
     QIcon getAppIcon();
 }

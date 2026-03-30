@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QStyleHints>
 
 // --- SpeedGraphWidget Implementation ---
 
@@ -36,8 +38,16 @@ void SpeedGraphWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     
-    p.fillRect(rect(), Qt::white);
-    p.setPen(QColor(230, 230, 230));
+    bool isDark = (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    QColor bgColor = isDark ? QColor(30, 30, 30) : Qt::white;
+    QColor gridColor = isDark ? QColor(60, 60, 60) : QColor(230, 230, 230);
+    QColor curveColor = isDark ? QColor(0, 120, 215) : QColor(0, 180, 0);
+    QColor gradColor1 = isDark ? QColor(0, 120, 215, 150) : QColor(0, 200, 0, 150);
+    QColor gradColor2 = isDark ? QColor(0, 120, 215, 50) : QColor(0, 200, 0, 50);
+    QColor textColor = isDark ? Qt::white : Qt::black;
+
+    p.fillRect(rect(), bgColor);
+    p.setPen(gridColor);
     int gridW = width() / 10;
     int gridH = height() / 4;
     for(int i=1; i<10; ++i) p.drawLine(i*gridW, 0, i*gridW, height());
@@ -61,13 +71,13 @@ void SpeedGraphWidget::paintEvent(QPaintEvent*) {
     path.closeSubpath();
     
     QLinearGradient grad(0, 0, 0, height());
-    grad.setColorAt(0, QColor(0, 200, 0, 150));
-    grad.setColorAt(1, QColor(0, 200, 0, 50));
+    grad.setColorAt(0, gradColor1);
+    grad.setColorAt(1, gradColor2);
     p.setBrush(grad);
     p.setPen(Qt::NoPen);
     p.drawPath(path);
     
-    p.setPen(QPen(QColor(0, 180, 0), 2));
+    p.setPen(QPen(curveColor, 2));
     p.setBrush(Qt::NoBrush);
     QPainterPath strokePath;
     
@@ -83,7 +93,7 @@ void SpeedGraphWidget::paintEvent(QPaintEvent*) {
     p.drawPath(strokePath);
     
     if (!m_speedText.isEmpty()) {
-        p.setPen(Qt::black);
+        p.setPen(textColor);
         QFont f = p.font();
         f.setBold(true);
         p.setFont(f);

@@ -53,6 +53,7 @@ extern bool g_LogToFile;
 extern std::string g_FallbackTransferPath;
 extern bool g_RememberPos;
 extern int g_Language; // 0: Auto, 1: zh_CN, 2: en_US
+extern int g_ThemeMode; // 0: Auto, 1: Light, 2: Dark
 
 extern int g_HkToggleMod;
 extern int g_HkToggleVk;

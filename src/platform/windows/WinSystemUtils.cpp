@@ -12,6 +12,8 @@
 #include <netlistmgr.h>
 #include <ws2bth.h>
 #include <shellapi.h>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QStyleHints>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -491,6 +493,18 @@ void LaunchHashTest(const std::string& targetFile) {
         if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, 0, NULL, exeDir.c_str(), &si, &pi)) {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
+        }
+    }
+
+    void ApplyTheme(int mode) {
+        if (!QGuiApplication::instance()) return;
+        
+        if (mode == 1) { // Light
+            QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
+        } else if (mode == 2) { // Dark
+            QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+        } else { // Auto
+            QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Unknown);
         }
     }
 }

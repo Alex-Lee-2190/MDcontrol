@@ -3,6 +3,8 @@
 #include <QtGui/QPainterPath>
 #include <QtSvg/QSvgRenderer>
 #include <QtCore/QByteArray>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QStyleHints>
 #include <cmath>
 #include <algorithm>
 
@@ -331,39 +333,46 @@ namespace IconDrawer {
     }
 
     QIcon getBtDeviceIcon(bool isHistory, bool isPaired) {
-        int iconW = 24; 
+        int logicalW = 24; 
         
         if (!isHistory && !isPaired) {
-            QPixmap emptyPix(1, iconW);
+            QPixmap emptyPix(1, logicalW);
             emptyPix.fill(Qt::transparent);
             return QIcon(emptyPix);
         }
 
-        int width = 0;
-        if (isHistory) width += iconW;
-        if (isPaired) width += iconW;
+        int logicalWidth = 0;
+        if (isHistory) logicalWidth += logicalW;
+        if (isPaired) logicalWidth += logicalW;
         
-        QPixmap pixmap(width, iconW);
+        qreal dpr = 4.0;
+        QPixmap pixmap(logicalWidth * dpr, logicalW * dpr);
+        pixmap.setDevicePixelRatio(dpr);
         pixmap.fill(Qt::transparent);
+        
         QPainter p(&pixmap);
         p.setRenderHint(QPainter::Antialiasing);
         
         int currentX = 0;
+        bool isDark = (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+        const char* colorStr = isDark ? "#ffffff" : "#000000";
         
         if (isPaired) {
-            QRectF rect(currentX, 0, iconW, iconW);
-            static QSvgRenderer rendererPaired(QByteArray(R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-    <path d="M 400 350 H 250 A 150 150 0 0 0 250 650 H 400" fill="none" stroke="#ffffff" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 600 350 H 750 A 150 150 0 0 1 750 650 H 600" fill="none" stroke="#ffffff" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M 400 500 H 600" fill="none" stroke="#ffffff" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>)"));
+            QRectF rect(currentX, 0, logicalW, logicalW);
+            QString svgPaired = QString(R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+    <path d="M 400 350 H 250 A 150 150 0 0 0 250 650 H 400" fill="none" stroke="%1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 600 350 H 750 A 150 150 0 0 1 750 650 H 600" fill="none" stroke="%1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 400 500 H 600" fill="none" stroke="%1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>)").arg(colorStr);
+            QSvgRenderer rendererPaired(svgPaired.toUtf8());
             rendererPaired.render(&p, rect.adjusted(2, 2, -2, -2));
-            currentX += iconW;
+            currentX += logicalW;
         }
         
         if (isHistory) {
-            QRectF rect(currentX, 0, iconW, iconW);
-            static QSvgRenderer rendererHistory(QByteArray(R"(<svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"><path d="M974.754909 315.345455c108.613818 232.913455 7.842909 509.789091-225.093818 618.402909A465.454545 465.454545 0 0 1 230.4 847.546182a46.545455 46.545455 0 0 1 64.488727-67.118546 372.363636 372.363636 0 0 0 415.418182 68.957091c186.344727-86.877091 266.961455-308.363636 180.084364-494.708363C803.490909 168.331636 582.004364 87.738182 395.636364 174.615273a371.805091 371.805091 0 0 0-188.462546 199.377454l63.069091 5.306182a23.272727 23.272727 0 0 1 17.198546 36.468364l-123.857455 178.269091a46.312727 46.312727 0 0 1-41.588364 19.781818 41.634909 41.634909 0 0 1-35.770181-26.926546L12.893091 391.051636a23.272727 23.272727 0 0 1 23.738182-31.371636l74.472727 6.260364A464.896 464.896 0 0 1 356.305455 90.251636C589.265455-18.385455 866.141091 82.385455 974.754909 315.322182zM529.733818 232.727273a46.545455 46.545455 0 0 1 46.405818 43.054545l0.139637 3.490909v228.887273l139.473454 79.802182a46.545455 46.545455 0 0 1 18.967273 60.276363l-1.675636 3.258182a46.545455 46.545455 0 0 1-60.276364 18.944l-3.258182-1.675636-151.179636-86.481455a69.818182 69.818182 0 0 1-35.002182-55.924363l-0.139636-4.677818V279.272727a46.545455 46.545455 0 0 1 46.545454-46.545454z" fill="#ffffff" /></svg>)"));
+            QRectF rect(currentX, 0, logicalW, logicalW);
+            QString svgHistory = QString(R"(<svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"><path d="M974.754909 315.345455c108.613818 232.913455 7.842909 509.789091-225.093818 618.402909A465.454545 465.454545 0 0 1 230.4 847.546182a46.545455 46.545455 0 0 1 64.488727-67.118546 372.363636 372.363636 0 0 0 415.418182 68.957091c186.344727-86.877091 266.961455-308.363636 180.084364-494.708363C803.490909 168.331636 582.004364 87.738182 395.636364 174.615273a371.805091 371.805091 0 0 0-188.462546 199.377454l63.069091 5.306182a23.272727 23.272727 0 0 1 17.198546 36.468364l-123.857455 178.269091a46.312727 46.312727 0 0 1-41.588364 19.781818 41.634909 41.634909 0 0 1-35.770181-26.926546L12.893091 391.051636a23.272727 23.272727 0 0 1 23.738182-31.371636l74.472727 6.260364A464.896 464.896 0 0 1 356.305455 90.251636C589.265455-18.385455 866.141091 82.385455 974.754909 315.322182zM529.733818 232.727273a46.545455 46.545455 0 0 1 46.405818 43.054545l0.139637 3.490909v228.887273l139.473454 79.802182a46.545455 46.545455 0 0 1 18.967273 60.276363l-1.675636 3.258182a46.545455 46.545455 0 0 1-60.276364 18.944l-3.258182-1.675636-151.179636-86.481455a69.818182 69.818182 0 0 1-35.002182-55.924363l-0.139636-4.677818V279.272727a46.545455 46.545455 0 0 1 46.545454-46.545454z" fill="%1" /></svg>)").arg(colorStr);
+            QSvgRenderer rendererHistory(svgHistory.toUtf8());
             rendererHistory.render(&p, rect.adjusted(2, 2, -2, -2));
         }
         
@@ -371,13 +380,50 @@ namespace IconDrawer {
     }
 
     QIcon getDeleteIcon() {
-        int iconW = 24;
-        QPixmap pixmap(iconW, iconW);
+        int logicalW = 24;
+        qreal dpr = 4.0;
+        QPixmap pixmap(logicalW * dpr, logicalW * dpr);
+        pixmap.setDevicePixelRatio(dpr);
         pixmap.fill(Qt::transparent);
+        
         QPainter p(&pixmap);
         p.setRenderHint(QPainter::Antialiasing);
-        QRectF rect(0, 0, iconW, iconW);
-        static QSvgRenderer renderer(QByteArray(R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M 256 256 L 768 768 M 768 256 L 256 768" fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round" stroke-linejoin="round" /></svg>)"));
+        QRectF rect(0, 0, logicalW, logicalW);
+        bool isDark = (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+        const char* colorStr = isDark ? "#ffffff" : "#000000";
+        QString svg = QString(R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M 256 256 L 768 768 M 768 256 L 256 768" fill="none" stroke="%1" stroke-width="72" stroke-linecap="round" stroke-linejoin="round" /></svg>)").arg(colorStr);
+        QSvgRenderer renderer(svg.toUtf8());
+        renderer.render(&p, rect.adjusted(2, 2, -2, -2));
+        return QIcon(pixmap);
+    }
+    
+    QIcon getTransferPauseIcon(bool isPaused) {
+        int logicalW = 24;
+        qreal dpr = 4.0;
+        QPixmap pixmap(logicalW * dpr, logicalW * dpr);
+        pixmap.setDevicePixelRatio(dpr);
+        pixmap.fill(Qt::transparent);
+        
+        QPainter p(&pixmap);
+        p.setRenderHint(QPainter::Antialiasing);
+        QRectF rect(0, 0, logicalW, logicalW);
+        bool isDark = (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+        const char* colorStr = isDark ? "#ffffff" : "#000000";
+
+        QString svg;
+        if (isPaused) {
+            svg = QString(R"SVG(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(102.4 102.4) scale(0.8)">
+    <path d="M 352 192 L 832 512 L 352 832 Z" fill="none" stroke="%1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>)SVG").arg(colorStr);
+        } else {
+            svg = QString(R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect x="284" y="224" width="70" height="576" rx="32" fill="%1" stroke="%1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" />
+  <rect x="612" y="224" width="70" height="576" rx="32" fill="%1" stroke="%1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" />
+</svg>)").arg(colorStr);
+        }
+        QSvgRenderer renderer(svg.toUtf8());
         renderer.render(&p, rect.adjusted(2, 2, -2, -2));
         return QIcon(pixmap);
     }

@@ -26,6 +26,7 @@ bool g_LogToFile = true;
 std::string g_FallbackTransferPath = "C:\\Users\\Public\\Downloads";
 bool g_RememberPos = true;
 int g_Language = 0; // 0: Auto, 1: zh_CN, 2: en_US
+int g_ThemeMode = 0; // 0: Auto, 1: Light, 2: Dark
 
 int g_HkToggleMod = 0;
 int g_HkToggleVk = 0;
@@ -277,13 +278,16 @@ int main(int argc, char *argv[]) {
     
     QSettings settings("MDControl", "Settings");
     g_Language = settings.value("Language", 0).toInt();
+    g_ThemeMode = settings.value("ThemeMode", 0).toInt();
 
     g_MyName = SystemUtils::GetComputerNameStr();
     g_MySysProps = SystemUtils::GetSystemProperties();
 
-    MDC_LOG_INFO(LogTag::SYS, "Settings loaded language: %d", g_Language);
+    MDC_LOG_INFO(LogTag::SYS, "Settings loaded language: %d theme: %d", g_Language, g_ThemeMode);
 
     QApplication app(argc, argv);
+
+    SystemUtils::ApplyTheme(g_ThemeMode);
 
     app.setWindowIcon(IconDrawer::getAppIcon());
 

@@ -134,8 +134,26 @@ void MapWidget::paintEvent(QPaintEvent*) {
         p.drawRoundedRect(masterRect, 2, 2);
     }
 
+    QString masterNameStr = "Master";
+    if (isSlaveMode) {
+        QString props = QString::fromStdString(g_MasterSysProps);
+        int idx = props.indexOf("设备名称: ");
+        if (idx != -1) {
+            int end = props.indexOf('\n', idx);
+            masterNameStr = props.mid(idx + 6, end - idx - 6).trimmed();
+        } else {
+            idx = props.indexOf("Device Name: ");
+            if (idx != -1) {
+                int end = props.indexOf('\n', idx);
+                masterNameStr = props.mid(idx + 13, end - idx - 13).trimmed();
+            }
+        }
+    } else {
+        masterNameStr = QString::fromStdString(g_MyName);
+    }
+
     p.setPen(QColor(255, 255, 255, 220));
-    p.drawText(masterRect, Qt::AlignCenter, isSlaveMode ? T("远程 (主机)") : T("本地 (主机)"));
+    p.drawText(masterRect, Qt::AlignCenter, T("%1 (主机)").arg(masterNameStr));
 
     for (size_t i = 0; i < slavesToDraw.size(); ++i) {
         QRectF slaveRect = tempSlaveRects[i];

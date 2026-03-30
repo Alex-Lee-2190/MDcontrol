@@ -147,6 +147,7 @@ public:
     
     bool hasShownBtWarning() const { return m_btWarningShown; }
     void setBtWarningShown(bool shown = true) { m_btWarningShown = shown; }
+    void updateTheme();
 
 signals:
     void cancelled();

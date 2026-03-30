@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "IconDrawer.h"
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QStyle>
@@ -35,16 +36,19 @@ FileTransferWidget::FileTransferWidget(uint32_t taskId, const QString& deviceNam
     m_lblPercentage->setFont(f);
     
     m_btnCancel = new QPushButton();
-    m_btnCancel->setIcon(style()->standardIcon(QStyle::SP_TitleBarCloseButton));
-    m_btnCancel->setFlat(true);
+    m_btnCancel->setIcon(IconDrawer::getDeleteIcon());
+    m_btnCancel->setIconSize(QSize(24, 24));
+    m_btnCancel->setStyleSheet("QPushButton { background: transparent; border: none; } QPushButton:hover { background: rgba(128, 128, 128, 0.2); border-radius: 4px; }");
     m_btnCancel->setFixedSize(30, 30);
     connect(m_btnCancel, &QPushButton::clicked, this, &QWidget::close);
     
     m_btnPause = new QPushButton();
-    m_btnPause->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+    m_btnPause->setIcon(IconDrawer::getTransferPauseIcon(false));
+    m_btnPause->setIconSize(QSize(24, 24));
     m_btnPause->setCheckable(true);
     m_btnPause->setFixedSize(30, 30);
     m_btnPause->setToolTip(T("暂停/继续"));
+    m_btnPause->setStyleSheet("QPushButton { background: transparent; border: none; } QPushButton:hover { background: rgba(128, 128, 128, 0.2); border-radius: 4px; }");
     connect(m_btnPause, &QPushButton::toggled, this, &FileTransferWidget::onPauseClicked);
 
     topLayout->addWidget(m_lblPercentage);
@@ -75,6 +79,11 @@ FileTransferWidget::FileTransferWidget(uint32_t taskId, const QString& deviceNam
     detailsLayout->addWidget(m_lblTimeRemaining);
     detailsLayout->addWidget(m_lblItemsRemaining);
     layout->addLayout(detailsLayout);
+}
+
+void FileTransferWidget::updateTheme() {
+    m_btnCancel->setIcon(IconDrawer::getDeleteIcon());
+    m_btnPause->setIcon(IconDrawer::getTransferPauseIcon(m_btnPause->isChecked()));
 }
 
 void FileTransferWidget::setTotalInfo(uint64_t totalSize, int totalFiles) {
@@ -123,11 +132,11 @@ void FileTransferWidget::updateTraversalProgress(uint64_t currentSize, int curre
 void FileTransferWidget::setPaused(bool paused) {
     QSignalBlocker blocker(m_btnPause);
     m_btnPause->setChecked(paused);
-    m_btnPause->setIcon(style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+    m_btnPause->setIcon(IconDrawer::getTransferPauseIcon(paused));
 }
 
 void FileTransferWidget::onPauseClicked(bool checked) {
-    m_btnPause->setIcon(style()->standardIcon(checked ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+    m_btnPause->setIcon(IconDrawer::getTransferPauseIcon(checked));
     emit pauseToggled(checked);
 }
 

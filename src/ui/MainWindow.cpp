@@ -463,6 +463,10 @@ void ControlWindow::updateLanguageUI() {
         statusLabel->setText(T("正在监听连接"));
     }
     
+    for (auto const& [tid, w] : m_transferWidgets) {
+        if (w) w->updateTheme();
+    }
+    
     refreshBtList();
     if (mapWidget) mapWidget->update();
 }
@@ -604,6 +608,17 @@ void ControlWindow::openSettings() {
     langCb->setCurrentIndex(langCb->findData(g_Language));
     langL->addWidget(langCb);
     genLayout->addLayout(langL);
+
+    QHBoxLayout* themeL = new QHBoxLayout();
+    themeL->addWidget(new QLabel(T("主题模式")));
+    QComboBox* themeCb = new QComboBox();
+    themeCb->addItem(T("跟随系统"), 0);
+    themeCb->addItem(T("浅色"), 1);
+    themeCb->addItem(T("深色"), 2);
+    themeCb->setCurrentIndex(themeCb->findData(g_ThemeMode));
+    themeL->addWidget(themeCb);
+    genLayout->addLayout(themeL);
+
     mainLayout->addWidget(genGroup);
 
     QGroupBox* hkGroup = new QGroupBox(T("快捷键"));
@@ -706,7 +721,9 @@ void ControlWindow::openSettings() {
     QObject::connect(box, &QDialogButtonBox::accepted, [&](){
         MDC_LOG_INFO(LogTag::UI, "Settings saved language: %d logLevel: %d", langCb->currentData().toInt(), logLevelCb->currentData().toInt());
         int oldLang = g_Language;
+        int oldTheme = g_ThemeMode;
         g_Language = langCb->currentData().toInt();
+        g_ThemeMode = themeCb->currentData().toInt();
 
         g_HkToggleMod = t_mod; g_HkToggleVk = t_vk;
         g_HkLockMod = l_mod; g_HkLockVk = l_vk;
@@ -728,8 +745,11 @@ void ControlWindow::openSettings() {
         s.setValue("LogLevel", g_LogLevel);
         s.setValue("RememberPos", g_RememberPos);
         s.setValue("Language", g_Language);
+        s.setValue("ThemeMode", g_ThemeMode);
+
+        SystemUtils::ApplyTheme(g_ThemeMode);
         
-        if (oldLang != g_Language) {
+        if (oldLang != g_Language || oldTheme != g_ThemeMode) {
             updateLanguageUI();
         }
         
@@ -2155,8 +2175,8 @@ void ConflictItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
     painter->save();
     
     QRect r = option.rect;
-    painter->fillRect(r, option.state & QStyle::State_Selected ? QColor(0, 0, 0, 10) : option.palette.base());
-    painter->setPen(QColor(220, 220, 220));
+    painter->fillRect(r, option.state & QStyle::State_Selected ? option.palette.highlight() : option.palette.base());
+    painter->setPen(option.palette.midlight().color());
     painter->drawRect(r.adjusted(2, 2, -2, -2));
     
     void* ptr = index.data(Qt::UserRole).value<void*>();
@@ -2174,7 +2194,7 @@ void ConflictItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
     };
 
     QRect nameRect(r.x() + 10, r.y() + 5, r.width() - 20, 25);
-    painter->setPen(Qt::black);
+    painter->setPen(option.palette.text().color());
     QFont f = painter->font();
     f.setBold(true);
     painter->setFont(f);
@@ -2191,12 +2211,13 @@ void ConflictItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& 
         QStyleOptionButton cbOpt;
         cbOpt.rect = QRect(sideRect.x(), sideRect.y() + 5, 20, 20);
         cbOpt.state = QStyle::State_Enabled | (isChecked ? QStyle::State_On : QStyle::State_Off);
+        cbOpt.palette = option.palette;
         QApplication::style()->drawControl(QStyle::CE_CheckBox, &cbOpt, painter);
 
-        painter->setPen(QColor(0, 102, 204));
+        painter->setPen(option.palette.link().color());
         painter->drawText(QRect(sideRect.x() + 25, sideRect.y() + 5, sideRect.width() - 25, 20), Qt::AlignLeft | Qt::AlignVCenter, title);
 
-        painter->setPen(QColor(80, 80, 80));
+        painter->setPen(option.palette.buttonText().color());
         painter->drawText(QRect(sideRect.x(), sideRect.y() + 30, sideRect.width(), 20), Qt::AlignLeft | Qt::AlignVCenter, timeStr);
         painter->drawText(QRect(sideRect.x(), sideRect.y() + 50, sideRect.width(), 20), Qt::AlignLeft | Qt::AlignVCenter, sizeStr);
     };

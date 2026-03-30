@@ -82,6 +82,9 @@ namespace SystemUtils {
     
     // Launch hash test process
     void LaunchHashTest(const std::string& targetFile);
+
+    // Apply theme mode (0: Auto, 1: Light, 2: Dark)
+    void ApplyTheme(int mode);
 }
 
 #endif // SYSTEM_UTILS_H

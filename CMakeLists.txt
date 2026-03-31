@@ -77,6 +77,7 @@ if(WIN32)
         oleaut32
         advapi32
         crypt32
+        bcrypt
     )
     set_target_properties(MDControl PROPERTIES WIN32_EXECUTABLE ON)
 endif()

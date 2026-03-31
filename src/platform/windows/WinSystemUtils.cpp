@@ -504,7 +504,18 @@ void LaunchHashTest(const std::string& targetFile) {
         } else if (mode == 2) { // Dark
             QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
         } else { // Auto
-            QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Unknown);
+            DWORD value = 1;
+            DWORD size = sizeof(value);
+            HKEY hKey;
+            if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+                RegQueryValueExW(hKey, L"AppsUseLightTheme", NULL, NULL, (LPBYTE)&value, &size);
+                RegCloseKey(hKey);
+            }
+            if (value == 0) {
+                QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+            } else {
+                QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
+            }
         }
     }
 }

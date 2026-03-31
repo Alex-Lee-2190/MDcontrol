@@ -19,7 +19,7 @@ namespace IconDrawer {
     void drawDisconnectedIcon(QPainter& painter, const QRectF& r);
     void drawFocusIcon(QPainter& painter, const QRectF& r); 
     
-    QIcon getBtDeviceIcon(bool isHistory, bool isPaired);
+    QIcon getDeviceIcon(bool isHistory, bool isPaired);
     QIcon getDeleteIcon();
     QIcon getTransferPauseIcon(bool isPaused);
     

@@ -332,7 +332,7 @@ namespace IconDrawer {
         painter.drawPixmap(r.topLeft(), pixmap);
     }
 
-    QIcon getBtDeviceIcon(bool isHistory, bool isPaired) {
+    QIcon getDeviceIcon(bool isHistory, bool isPaired) {
         int logicalW = 24; 
         
         if (!isHistory && !isPaired) {

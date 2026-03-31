@@ -67,6 +67,16 @@ public:
     virtual std::string GetLocalAddress() = 0;
 };
 
+// LAN Discovery management interface
+class ILanDiscoveryMgr {
+public:
+    virtual ~ILanDiscoveryMgr() = default;
+    virtual void StartServer(int port, int tcpPort, const std::string& name) = 0;
+    virtual void StopServer() = 0;
+    virtual void StartScan(int broadcastPort, int replyPort, std::function<void(const std::string& ip, const std::string& name, int tcpPort)> onDiscovered) = 0;
+    virtual void StopScan() = 0;
+};
+
 // File lock interface to prevent deletion/renaming during transfer
 class IFileLockMgr {
 public:
@@ -85,6 +95,7 @@ public:
     virtual std::string RSAEncrypt(const std::string& pubKey, const std::string& data) = 0;
     virtual std::string RSADecrypt(const std::string& privKey, const std::string& encData) = 0;
     virtual std::string GenerateRandomString(int length) = 0;
+    virtual std::string GetPublicKeyFingerprint(const std::string& pubKey) = 0;
 };
 
 #endif // INTERFACES_H

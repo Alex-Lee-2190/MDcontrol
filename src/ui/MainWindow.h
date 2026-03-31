@@ -71,6 +71,17 @@ private:
     ConflictListModel* m_model;
 };
 
+class PairingManagerDialog : public QDialog {
+    Q_OBJECT
+public:
+    PairingManagerDialog(QWidget* parent = nullptr);
+private slots:
+    void deleteSelected();
+private:
+    QListWidget* m_listWidget;
+    void refreshList();
+};
+
 class MapWidget : public QWidget {
 public:
     explicit MapWidget(QWidget* parent = nullptr);
@@ -192,13 +203,21 @@ class ControlWindow : public QWidget {
 public:
     QLineEdit* ipEdit;
     QLineEdit* portEdit;
+    QWidget* tcpConfigWidget; 
+    QPushButton* m_btnTcpConnect;
+
+    QWidget* btConfigWidget;
+    QLineEdit* macEdit;
+    QPushButton* m_btnBtConnect;
+    QLabel* m_lblMac;
+
     QRadioButton* modeTcpBtn; 
     QRadioButton* modeBtBtn;  
-    QWidget* tcpConfigWidget; 
     QPushButton* startBtn; 
+    QPushButton* m_btnManagePairing;
     QLabel* statusLabel;
     MapWidget* mapWidget;
-    QListWidget* btListWidget; 
+    QListWidget* deviceListWidget; 
     
     QCheckBox* listenTcpCb;
     QCheckBox* listenBtCb;
@@ -215,6 +234,7 @@ public:
     QWidget* m_connectWindow; 
     
     std::map<unsigned long long, QString> m_scannedBtDevices; 
+    std::map<std::string, std::pair<std::string, int>> m_scannedTcpDevices;
     
     QSystemTrayIcon* m_trayIcon;
     QMenu* m_trayMenu;
@@ -224,14 +244,14 @@ public:
     void onStart(); 
     void onStop();  
     void onModeChanged(int index); 
-    void onBtItemClicked(QListWidgetItem* item); 
+    void onDeviceItemClicked(QListWidgetItem* item); 
     void startMasterCommon(SOCKET newSock, std::string name);
     void openSettings(); 
     void showConnectWindow(); 
     
     void startListening();
     void stopListening();
-    void refreshBtList(); 
+    void refreshDeviceList(); 
 
     void updateLanguageUI(); 
 
@@ -241,6 +261,10 @@ public:
     void reconnectSlave(int idx);
 
     void updateTrayMenu();
+    void onManualTcpConnect();
+    void onManualBtConnect();
+    void ConnectTcp(const std::string& ip, int port, const std::string& name);
+    void ConnectBt(unsigned long long addr, const std::string& name);
 
 protected:
     void customEvent(QEvent *event) override;

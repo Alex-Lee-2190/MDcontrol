@@ -12,6 +12,8 @@
 #include <QtGui/QAction>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QToolTip>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QStyleHints>
 #include <cmath>
 
 MapWidget::MapWidget(QWidget* parent) : QWidget(parent) {
@@ -27,7 +29,11 @@ MapWidget::MapWidget(QWidget* parent) : QWidget(parent) {
 void MapWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing); 
-    p.fillRect(rect(), QColor(40, 44, 52));  
+    
+    bool isDark = (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    QColor backgroundColor = isDark ? QColor(40, 44, 52) : QColor(225, 228, 232);
+    QColor textColor = QColor(255, 255, 255, 240); // 始终保持白色字体
+    p.fillRect(rect(), backgroundColor);  
 
     if (g_LocalW == 0) return; 
 
@@ -122,7 +128,7 @@ void MapWidget::paintEvent(QPaintEvent*) {
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0, 0, 0, 60)); 
     p.drawRoundedRect(masterRect.translated(3, 3), 2, 2);
-    QColor masterColor = QColor(144, 147, 153); 
+    QColor masterColor = isDark ? QColor(144, 147, 153) : QColor(200, 200, 200); 
     if (!isSlaveMode && g_ActiveSlaveIdx == -1) masterColor = QColor(64, 158, 255); 
     else if (isSlaveMode && g_MirrorActiveIdx == -1) masterColor = QColor(103, 194, 58); 
     p.setBrush(masterColor);
@@ -152,7 +158,7 @@ void MapWidget::paintEvent(QPaintEvent*) {
         masterNameStr = QString::fromStdString(g_MyName);
     }
 
-    p.setPen(QColor(255, 255, 255, 220));
+    p.setPen(textColor);
     p.drawText(masterRect, Qt::AlignCenter, T("%1 (主机)").arg(masterNameStr));
 
     for (size_t i = 0; i < slavesToDraw.size(); ++i) {
@@ -160,7 +166,7 @@ void MapWidget::paintEvent(QPaintEvent*) {
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(0, 0, 0, 60)); 
         p.drawRoundedRect(slaveRect.translated(3, 3), 2, 2);
-        QColor bg = QColor(144, 147, 153); 
+        QColor bg = isDark ? QColor(144, 147, 153) : QColor(200, 200, 200); 
         if (!isSlaveMode) {
             if (m_isDragging && m_dragSlaveIdx == (int)i) bg = QColor(230, 162, 60);
             else if (activeDrawIdx == (int)i) bg = QColor(103, 194, 58); 
@@ -177,7 +183,7 @@ void MapWidget::paintEvent(QPaintEvent*) {
             p.drawRoundedRect(slaveRect, 2, 2);
         }
 
-        p.setPen(QColor(255, 255, 255, 220));
+        p.setPen(textColor);
         p.drawText(slaveRect, Qt::AlignCenter, QString::fromStdString(slavesToDraw[i].name));
         
         bool isConnected = true;
@@ -242,7 +248,6 @@ void MapWidget::paintEvent(QPaintEvent*) {
         }
     } else {
         if (g_SlaveFocused && g_MirrorActiveIdx >= 0 && g_MirrorActiveIdx < (int)tempSlaveRects.size()) {
-            // Master is controlling THIS slave. Use local physical mouse for zero-latency dot.
             int px, py;
             SystemUtils::GetCursorPos(px, py);
             QRectF r = tempSlaveRects[g_MirrorActiveIdx];
@@ -250,7 +255,6 @@ void MapWidget::paintEvent(QPaintEvent*) {
             dotY = r.y() + (py / (double)g_LocalH) * r.height();
             drawDot = true;
         } else if (g_MirrorActiveIdx == -1) {
-            // Master is controlling itself
             int rmx = g_RemoteMouseX.load();
             int rmy = g_RemoteMouseY.load();
             if (rmx < 0) rmx = 0;
@@ -259,7 +263,6 @@ void MapWidget::paintEvent(QPaintEvent*) {
             dotY = myo + (rmy / g_MirrorMasterScale) * s;
             drawDot = true;
         } else if (g_MirrorActiveIdx >= 0 && g_MirrorActiveIdx < (int)tempSlaveRects.size()) {
-            // Master is controlling ANOTHER slave
             QRectF r = tempSlaveRects[g_MirrorActiveIdx];
             auto& ctx = slavesToDraw[g_MirrorActiveIdx];
             int mx = g_MirrorTx.load();
@@ -411,7 +414,7 @@ void MapWidget::paintEvent(QPaintEvent*) {
         }
     }
     
-    QColor latColor = QColor(144, 147, 153); 
+    QColor latColor = isDark ? QColor(144, 147, 153) : QColor(170, 170, 170); 
     if (showLatencyColor) {
         if (currentLat < 20) latColor = QColor(103, 194, 58); 
         else if (currentLat < 50) latColor = QColor(230, 162, 60); 

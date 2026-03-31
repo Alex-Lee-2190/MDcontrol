@@ -43,7 +43,6 @@ SocketHandle g_TcpListenSock = INVALID_SOCKET_HANDLE;
 
 // --- Auth Helper ---
 
-// Custom synchronizer to replace std::promise which has race condition bugs in MSVC
 struct PinSync {
     std::mutex mtx;
     std::condition_variable cv;
@@ -61,9 +60,9 @@ bool recvAll(SocketHandle sock, char* buf, int size) {
     return true;
 }
 
-void SaveTrustedKey(SocketHandle sock, const std::string& key) {
-    std::string peerId = SystemUtils::GetPeerAddress(sock);
-    auto updateSettings = [key, peerId, sock]() {
+void SaveTrustedKey(const std::string& key, const std::string& name) {
+    std::string fingerprint = g_Context->CryptoMgr->GetPublicKeyFingerprint(key);
+    auto updateSettings = [key, fingerprint, name]() {
         QSettings settings("MDControl", "Auth");
         QStringList trustedKeys = settings.value("TrustedKeys").toStringList();
         if (!trustedKeys.contains(QString::fromStdString(key))) {
@@ -71,21 +70,12 @@ void SaveTrustedKey(SocketHandle sock, const std::string& key) {
             settings.setValue("TrustedKeys", trustedKeys);
         }
         QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
-        peerToKey[QString::fromStdString(peerId)] = QString::fromStdString(key);
+        peerToKey[QString::fromStdString(fingerprint)] = QString::fromStdString(key);
         settings.setValue("PeerToKey", peerToKey);
-
-        if (SystemUtils::IsBluetoothSocket(sock)) {
-            QSettings devSettings("MDControl", "Devices");
-            QStringList paired = devSettings.value("PairedMACs").toStringList();
-            try {
-                unsigned long long addr = std::stoull(peerId, nullptr, 16);
-                QString addrStr = QString::number(addr);
-                if (!paired.contains(addrStr)) {
-                    paired.append(addrStr);
-                    devSettings.setValue("PairedMACs", paired);
-                }
-            } catch(...) {}
-        }
+        
+        QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
+        peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(name);
+        settings.setValue("PeerNames", peerNames);
     };
 
     if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
@@ -149,7 +139,6 @@ std::string GetPinInputHelper(const QString& name) {
     }
 }
 
-// Symmetrical authentication core logic
 bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
     MDC_LOG_INFO(LogTag::AUTH, "Starting strict symmetrical auth for target");
     
@@ -169,20 +158,41 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
     if (!recvAll(sock, peerKeyData.data(), peerKeyLen)) return false;
     std::string peerPubKey(peerKeyData.begin(), peerKeyData.end());
 
-    std::string peerId = SystemUtils::GetPeerAddress(sock);
+    std::string fingerprint = g_Context->CryptoMgr->GetPublicKeyFingerprint(peerPubKey);
     bool iTrustPeer = false;
+    
     if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
         QSettings settings("MDControl", "Auth");
-        QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
-        if (peerToKey.value(QString::fromStdString(peerId)).toString().toStdString() == peerPubKey) {
+        QStringList trustedKeys = settings.value("TrustedKeys").toStringList();
+        if (trustedKeys.contains(QString::fromStdString(peerPubKey))) {
             iTrustPeer = true;
+            QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
+            if (peerToKey.value(QString::fromStdString(fingerprint)).toString().toStdString() != peerPubKey) {
+                peerToKey[QString::fromStdString(fingerprint)] = QString::fromStdString(peerPubKey);
+                settings.setValue("PeerToKey", peerToKey);
+            }
+            QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
+            if (peerNames.value(QString::fromStdString(fingerprint)).toString().toStdString() != targetName) {
+                peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(targetName);
+                settings.setValue("PeerNames", peerNames);
+            }
         }
     } else {
-        QMetaObject::invokeMethod(g_MainObject, [&iTrustPeer, peerId, peerPubKey]() {
+        QMetaObject::invokeMethod(g_MainObject, [&iTrustPeer, fingerprint, peerPubKey, targetName]() {
             QSettings settings("MDControl", "Auth");
-            QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
-            if (peerToKey.value(QString::fromStdString(peerId)).toString().toStdString() == peerPubKey) {
+            QStringList trustedKeys = settings.value("TrustedKeys").toStringList();
+            if (trustedKeys.contains(QString::fromStdString(peerPubKey))) {
                 iTrustPeer = true;
+                QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
+                if (peerToKey.value(QString::fromStdString(fingerprint)).toString().toStdString() != peerPubKey) {
+                    peerToKey[QString::fromStdString(fingerprint)] = QString::fromStdString(peerPubKey);
+                    settings.setValue("PeerToKey", peerToKey);
+                }
+                QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
+                if (peerNames.value(QString::fromStdString(fingerprint)).toString().toStdString() != targetName) {
+                    peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(targetName);
+                    settings.setValue("PeerNames", peerNames);
+                }
             }
         }, Qt::BlockingQueuedConnection);
     }
@@ -270,7 +280,7 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
 
         if (decPeerPin == myPin) {
             MDC_LOG_INFO(LogTag::AUTH, "PIN match successful saving trusted key for future RSA challenges");
-            SaveTrustedKey(sock, peerPubKey);
+            SaveTrustedKey(peerPubKey, targetName);
             return true;
         } else {
             MDC_LOG_WARN(LogTag::AUTH, "PIN match failed");
@@ -285,6 +295,102 @@ bool AuthMaster(SocketHandle sock, const std::string& targetName) {
 
 bool AuthSlave(SocketHandle sock) {
     return PerformSymmetricAuth(sock, T("主控端").toStdString());
+}
+
+// --- PairingManagerDialog Implementation ---
+
+PairingManagerDialog::PairingManagerDialog(QWidget* parent) : QDialog(parent) {
+    setWindowTitle(T("管理配对设备"));
+    setFixedSize(500, 300);
+    
+    QVBoxLayout* layout = new QVBoxLayout(this);
+    m_listWidget = new QListWidget(this);
+    layout->addWidget(m_listWidget);
+    
+    QHBoxLayout* btnLayout = new QHBoxLayout();
+    QPushButton* delBtn = new QPushButton(T("删除选中的记录"), this);
+    QPushButton* closeBtn = new QPushButton(T("关闭"), this);
+    btnLayout->addWidget(delBtn);
+    btnLayout->addWidget(closeBtn);
+    layout->addLayout(btnLayout);
+    
+    connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+    connect(delBtn, &QPushButton::clicked, this, &PairingManagerDialog::deleteSelected);
+    
+    refreshList();
+}
+
+void PairingManagerDialog::refreshList() {
+    m_listWidget->clear();
+    QSettings settings("MDControl", "Auth");
+    QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
+    QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
+    
+    for (auto it = peerToKey.constBegin(); it != peerToKey.constEnd(); ++it) {
+        QString fingerprint = it.key();
+        QString name = peerNames.value(fingerprint, T("未知设备")).toString();
+        
+        QString shortFingerprint = fingerprint;
+        if (fingerprint.length() > 16) {
+            shortFingerprint = fingerprint.left(8) + "..." + fingerprint.right(8);
+        }
+        
+        QString displayText = QString("%1\n%2").arg(name).arg(shortFingerprint);
+        
+        QListWidgetItem* item = new QListWidgetItem(displayText, m_listWidget);
+        item->setData(Qt::UserRole, it.value()); 
+        item->setData(Qt::UserRole + 1, fingerprint);
+    }
+}
+
+void PairingManagerDialog::deleteSelected() {
+    QListWidgetItem* item = m_listWidget->currentItem();
+    if (!item) return;
+    
+    QString pubKey = item->data(Qt::UserRole).toString();
+    QString fingerprint = item->data(Qt::UserRole + 1).toString();
+    
+    QSettings settings("MDControl", "Auth");
+    QString targetName = settings.value("PeerNames").toMap().value(fingerprint).toString();
+
+    bool isConnected = false;
+    {
+        std::lock_guard<std::mutex> lock(g_SlaveListLock);
+        for (auto& ctx : g_SlaveList) {
+            if (ctx->connected && ctx->name == targetName.toStdString()) {
+                isConnected = true;
+                break;
+            }
+        }
+    }
+    if (g_ClientSock != INVALID_SOCKET_HANDLE) {
+        if (targetName == T("主控端") || targetName == "Master" || targetName == "主控端") {
+            isConnected = true;
+        }
+    }
+    
+    if (isConnected) {
+        QMessageBox::warning(this, T("提示"), T("该设备已连接，无法删除记录"));
+        return;
+    }
+    
+    if (QMessageBox::question(this, T("提示"), T("确定要删除此配对记录吗？"), QMessageBox::Yes | QMessageBox::No) == QMessageBox::No) {
+        return;
+    }
+    
+    QStringList trustedKeys = settings.value("TrustedKeys").toStringList();
+    trustedKeys.removeAll(pubKey);
+    settings.setValue("TrustedKeys", trustedKeys);
+    
+    QMap<QString, QVariant> peerToKey = settings.value("PeerToKey").toMap();
+    peerToKey.remove(fingerprint);
+    settings.setValue("PeerToKey", peerToKey);
+
+    QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
+    peerNames.remove(fingerprint);
+    settings.setValue("PeerNames", peerNames);
+    
+    refreshList();
 }
 
 // --- ControlWindow Implementation ---
@@ -343,24 +449,41 @@ ControlWindow::ControlWindow() {
     netLayout->setContentsMargins(0, 0, 0, 0);
     ipEdit = new QLineEdit(QString::fromStdString(g_TargetIP));
     portEdit = new QLineEdit(QString::number(g_TargetPort));
+    m_btnTcpConnect = new QPushButton(T("直连"));
     m_lblIp = new QLabel(T("IP:"));
     netLayout->addWidget(m_lblIp); netLayout->addWidget(ipEdit);
     m_lblPort = new QLabel(T("端口:"));
     netLayout->addWidget(m_lblPort); netLayout->addWidget(portEdit);
+    netLayout->addWidget(m_btnTcpConnect);
     leftLayout->addWidget(tcpConfigWidget);
 
-    btListWidget = new QListWidget();
-    btListWidget->setFixedHeight(150);
-    btListWidget->setMinimumWidth(380); 
-    btListWidget->setIconSize(QSize(48, 24));
-    btListWidget->hide(); 
-    leftLayout->addWidget(btListWidget);
+    btConfigWidget = new QWidget();
+    QHBoxLayout* btConfigLayout = new QHBoxLayout(btConfigWidget);
+    btConfigLayout->setContentsMargins(0, 0, 0, 0);
+    m_lblMac = new QLabel(T("MAC:"));
+    macEdit = new QLineEdit();
+    macEdit->setPlaceholderText("00:11:22:33:44:55");
+    m_btnBtConnect = new QPushButton(T("直连"));
+    btConfigLayout->addWidget(m_lblMac); btConfigLayout->addWidget(macEdit);
+    btConfigLayout->addWidget(m_btnBtConnect);
+    leftLayout->addWidget(btConfigWidget);
+
+    deviceListWidget = new QListWidget();
+    deviceListWidget->setFixedHeight(150);
+    deviceListWidget->setMinimumWidth(380); 
+    deviceListWidget->setIconSize(QSize(48, 24));
+    leftLayout->addWidget(deviceListWidget);
 
     QHBoxLayout* btnLayout = new QHBoxLayout();
-    startBtn = new QPushButton(T("连接")); 
+    startBtn = new QPushButton(T("扫描")); 
     startBtn->setFixedWidth(120);
+    
+    m_btnManagePairing = new QPushButton(T("管理配对"));
+    m_btnManagePairing->setFixedWidth(120);
+    
     btnLayout->addStretch();
     btnLayout->addWidget(startBtn);
+    btnLayout->addWidget(m_btnManagePairing);
     btnLayout->addStretch();
     leftLayout->addLayout(btnLayout);
 
@@ -391,8 +514,15 @@ ControlWindow::ControlWindow() {
     connect(modeTcpBtn, &QRadioButton::toggled, this, [this](bool checked){ if(checked) onModeChanged(0); });
     connect(modeBtBtn, &QRadioButton::toggled, this, [this](bool checked){ if(checked) onModeChanged(1); });
     
+    connect(m_btnTcpConnect, &QPushButton::clicked, this, &ControlWindow::onManualTcpConnect);
+    connect(m_btnBtConnect, &QPushButton::clicked, this, &ControlWindow::onManualBtConnect);
     connect(startBtn, &QPushButton::clicked, this, &ControlWindow::onStart);
-    connect(btListWidget, &QListWidget::itemClicked, this, &ControlWindow::onBtItemClicked);
+    connect(deviceListWidget, &QListWidget::itemClicked, this, &ControlWindow::onDeviceItemClicked);
+
+    connect(m_btnManagePairing, &QPushButton::clicked, this, [this]() {
+        PairingManagerDialog dlg(this);
+        dlg.exec();
+    });
 
     QClipboard *clip = QApplication::clipboard();
     connect(clip, &QClipboard::dataChanged, this,[=](){
@@ -453,9 +583,13 @@ void ControlWindow::updateLanguageUI() {
     if (modeBtBtn) modeBtBtn->setText(T("蓝牙"));
     if (m_lblIp) m_lblIp->setText(T("IP:"));
     if (m_lblPort) m_lblPort->setText(T("端口:"));
+    if (m_lblMac) m_lblMac->setText(T("MAC:"));
+    if (m_btnTcpConnect) m_btnTcpConnect->setText(T("直连"));
+    if (m_btnBtConnect) m_btnBtConnect->setText(T("直连"));
     if (m_lblListenAsMaster) m_lblListenAsMaster->setText(T("监听其它主控端连接"));
     if (listenBtCb) listenBtCb->setText(T("蓝牙"));
-    if (startBtn) startBtn->setText(modeBtBtn->isChecked() ? T("扫描") : T("连接"));
+    if (startBtn) startBtn->setText(T("扫描"));
+    if (m_btnManagePairing) m_btnManagePairing->setText(T("管理配对"));
     
     if (statusLabel->text() == "Ready" || statusLabel->text() == "就绪") {
         statusLabel->setText(T("就绪"));
@@ -467,7 +601,7 @@ void ControlWindow::updateLanguageUI() {
         if (w) w->updateTheme();
     }
     
-    refreshBtList();
+    refreshDeviceList();
     if (mapWidget) mapWidget->update();
 }
 
@@ -760,59 +894,101 @@ void ControlWindow::openSettings() {
     dlg.exec();
 }
 
-void ControlWindow::refreshBtList() {
-    btListWidget->clear();
-    
+void ControlWindow::refreshDeviceList() {
+    deviceListWidget->clear();
+    bool isBT = modeBtBtn->isChecked();
+
     QSettings settings("MDControl", "Devices");
-    QMap<QString, QVariant> history = settings.value("History").toMap();
-    QStringList pairedList = settings.value("PairedMACs").toStringList();
+    QSettings authSettings("MDControl", "Auth");
+    QMap<QString, QVariant> peerToKey = authSettings.value("PeerToKey").toMap();
     
-    struct BtItem {
-        unsigned long long mac;
+    struct DeviceItem {
+        QString id; 
+        QString displayId; 
+        int port; 
         QString name;
         bool isHistory;
         bool isPaired;
     };
-    std::map<unsigned long long, BtItem> merged;
-    
-    QMapIterator<QString, QVariant> i(history);
-    while (i.hasNext()) {
-        i.next();
-        unsigned long long mac = i.key().toULongLong();
-        merged[mac] = {mac, i.value().toString(), true, pairedList.contains(i.key())};
-    }
-    
-    for (auto const& [mac, name] : m_scannedBtDevices) {
-        if (merged.find(mac) == merged.end()) {
-            merged[mac] = {mac, name, false, pairedList.contains(QString::number(mac))};
-        } else {
-            if (name != "Unknown") merged[mac].name = name;
+    std::map<QString, DeviceItem> merged;
+
+    if (isBT) {
+        QMap<QString, QVariant> history = settings.value("History").toMap();
+        QMapIterator<QString, QVariant> i(history);
+        while (i.hasNext()) {
+            i.next();
+            QString macStr = i.key();
+            unsigned long long mac = macStr.toULongLong();
+            char addrStr[32]; sprintf(addrStr, "%012llX", mac);
+            QString displayId = QString::fromStdString(addrStr);
+            merged[macStr] = {macStr, displayId, 0, i.value().toString(), true, false};
+        }
+        
+        for (auto const& [mac, name] : m_scannedBtDevices) {
+            QString macStr = QString::number(mac);
+            char addrStr[32]; sprintf(addrStr, "%012llX", mac);
+            QString displayId = QString::fromStdString(addrStr);
+            if (merged.find(macStr) == merged.end()) {
+                merged[macStr] = {macStr, displayId, 0, name, false, false};
+            } else {
+                if (name != "Unknown") merged[macStr].name = name;
+            }
+        }
+    } else {
+        QMap<QString, QVariant> history = settings.value("TcpHistory").toMap();
+        QMapIterator<QString, QVariant> i(history);
+        while (i.hasNext()) {
+            i.next();
+            QString ipPort = i.key();
+            QStringList parts = ipPort.split(":");
+            if (parts.size() == 2) {
+                QString ip = parts[0];
+                int port = parts[1].toInt();
+                merged[ipPort] = {ipPort, ip, port, i.value().toString(), true, false};
+            }
+        }
+        
+        for (auto const& [ip, info] : m_scannedTcpDevices) {
+            QString ipPort = QString::fromStdString(ip) + ":" + QString::number(info.second);
+            if (merged.find(ipPort) == merged.end()) {
+                merged[ipPort] = {ipPort, QString::fromStdString(ip), info.second, QString::fromStdString(info.first), false, false};
+            } else {
+                merged[ipPort].name = QString::fromStdString(info.first);
+                merged[ipPort].port = info.second;
+            }
         }
     }
     
-    std::vector<BtItem> cat3, cat2, cat1;
-    for (auto const& [mac, item] : merged) {
+    std::vector<DeviceItem> cat3, cat2, cat1;
+    for (auto const& [id, item] : merged) {
         if (item.isHistory && item.isPaired) cat3.push_back(item);
         else if (item.isHistory) cat2.push_back(item);
         else cat1.push_back(item);
     }
     
-    auto addToList = [&](const std::vector<BtItem>& list) {
+    auto addToList = [&](const std::vector<DeviceItem>& list) {
         for (const auto& item : list) {
-            char addrStr[32]; sprintf(addrStr, "%012llX", item.mac);
-            QString display = QString("%1 (%2)").arg(item.name).arg(addrStr);
+            QString display = isBT ? QString("%1 (%2)").arg(item.name).arg(item.displayId) 
+                                   : QString("%1 (%2:%3)").arg(item.name).arg(item.displayId).arg(item.port);
             
             QListWidgetItem* lwItem = new QListWidgetItem();
-            lwItem->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(item.mac));
+            if (isBT) {
+                lwItem->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(item.id.toULongLong()));
+                lwItem->setData(Qt::UserRole + 1, item.name);
+            } else {
+                lwItem->setData(Qt::UserRole, item.displayId);
+                lwItem->setData(Qt::UserRole + 1, item.port);
+                lwItem->setData(Qt::UserRole + 2, item.name);
+            }
             lwItem->setSizeHint(QSize(0, 36)); 
-            btListWidget->addItem(lwItem);
+            deviceListWidget->addItem(lwItem);
 
             QWidget* widget = new QWidget();
             QHBoxLayout* layout = new QHBoxLayout(widget);
             layout->setContentsMargins(5, 0, 5, 0);
             
             QLabel* iconLabel = new QLabel();
-            iconLabel->setPixmap(IconDrawer::getBtDeviceIcon(item.isHistory, item.isPaired).pixmap(QSize(48, 24)));
+            iconLabel->setPixmap(IconDrawer::getDeviceIcon(item.isHistory, item.isPaired).pixmap(QSize(48, 24)));
             
             QLabel* textLabel = new QLabel(display);
             textLabel->setStyleSheet("background: transparent;");
@@ -825,32 +1001,42 @@ void ControlWindow::refreshBtList() {
             delBtn->setToolTip(T("清除历史与配稳记录"));
             delBtn->setStyleSheet("background: transparent;");
             
-            connect(delBtn, &QPushButton::clicked, this, [this, item]() {
-                QSettings settings("MDControl", "Devices");
-                QMap<QString, QVariant> hist = settings.value("History").toMap();
-                hist.remove(QString::number(item.mac));
-                settings.setValue("History", hist);
-                
-                QStringList paired = settings.value("PairedMACs").toStringList();
-                paired.removeAll(QString::number(item.mac));
-                settings.setValue("PairedMACs", paired);
-
-                QSettings authSettings("MDControl", "Auth");
-                char addrStr[32]; sprintf(addrStr, "%012llX", item.mac);
-                QString peerId = QString::fromStdString(std::string(addrStr));
-                QMap<QString, QVariant> peerToKey = authSettings.value("PeerToKey").toMap();
-                if (peerToKey.contains(peerId)) {
-                    QString keyToRemove = peerToKey[peerId].toString();
-                    QStringList trustedKeys = authSettings.value("TrustedKeys").toStringList();
-                    trustedKeys.removeAll(keyToRemove);
-                    authSettings.setValue("TrustedKeys", trustedKeys);
-                    peerToKey.remove(peerId);
-                    authSettings.setValue("PeerToKey", peerToKey);
+            connect(delBtn, &QPushButton::clicked, this, [this, item, isBT]() {
+                bool isConnected = false;
+                {
+                    std::lock_guard<std::mutex> lock(g_SlaveListLock);
+                    for (auto& ctx : g_SlaveList) {
+                        if (ctx->connected && ctx->isBluetooth == isBT) {
+                            if (ctx->connectAddress == item.displayId.toStdString()) isConnected = true;
+                        }
+                    }
+                }
+                if (isConnected) {
+                    QMessageBox::warning(this, T("提示"), T("该设备已连接，无法删除记录"));
+                    return;
                 }
 
-                m_scannedBtDevices.erase(item.mac);
-                
-                refreshBtList();
+                if (QMessageBox::question(this, T("提示"), T("确定要删除此设备的记录吗？"), QMessageBox::Yes | QMessageBox::No) == QMessageBox::No) {
+                    return;
+                }
+
+                QSettings settings("MDControl", "Devices");
+                if (isBT) {
+                    QMap<QString, QVariant> hist = settings.value("History").toMap();
+                    hist.remove(item.id);
+                    settings.setValue("History", hist);
+                    
+                    m_scannedBtDevices.erase(item.id.toULongLong());
+                } else {
+                    QMap<QString, QVariant> hist = settings.value("TcpHistory").toMap();
+                    hist.remove(item.id);
+                    settings.setValue("TcpHistory", hist);
+
+                    auto it = m_scannedTcpDevices.find(item.displayId.toStdString());
+                    if (it != m_scannedTcpDevices.end()) m_scannedTcpDevices.erase(it);
+                }
+
+                refreshDeviceList();
             });
             
             layout->addWidget(iconLabel, 0, Qt::AlignLeft);
@@ -861,7 +1047,7 @@ void ControlWindow::refreshBtList() {
                 delBtn->setVisible(false);
             }
             
-            btListWidget->setItemWidget(lwItem, widget);
+            deviceListWidget->setItemWidget(lwItem, widget);
         }
     };
     
@@ -873,12 +1059,12 @@ void ControlWindow::refreshBtList() {
 void ControlWindow::onModeChanged(int index) {
     bool isBT = (index == 1);
     tcpConfigWidget->setVisible(!isBT); 
-    btListWidget->setVisible(isBT); 
-    startBtn->setText(isBT ? T("扫描") : T("连接"));
+    btConfigWidget->setVisible(isBT); 
     
-    if (isBT) {
-        refreshBtList();
-    }
+    deviceListWidget->setVisible(true);
+    startBtn->setText(T("扫描"));
+    
+    refreshDeviceList();
 }
 
 void ControlWindow::stopListening() {
@@ -888,6 +1074,9 @@ void ControlWindow::stopListening() {
     }
     if (g_Context->BluetoothMgr) {
         g_Context->BluetoothMgr->StopListen();
+    }
+    if (g_Context->LanDiscoveryMgr) {
+        g_Context->LanDiscoveryMgr->StopServer();
     }
 }
 
@@ -907,6 +1096,9 @@ void ControlWindow::startListening() {
 
     if (listenTcpCb->isChecked()) {
         int port = listenPortEdit->text().toInt();
+        if (g_Context->LanDiscoveryMgr) {
+            g_Context->LanDiscoveryMgr->StartServer(5002, port, g_MyName);
+        }
         RunInQThread([port]() {
             SocketHandle tcpListen = (SocketHandle)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             g_TcpListenSock = tcpListen;
@@ -1213,48 +1405,171 @@ void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std
     MDC_LOG_INFO(LogTag::NET, "Master handshake logic executed");
 }
 
-void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
-    if (g_Context->BluetoothMgr && !g_Context->BluetoothMgr->IsAvailable()) {
-        QMessageBox::warning(this, T("提示"), T("蓝牙未打开或不可用"));
+void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::string& name) {
+    bool alreadyConnected = false;
+    {
+        std::lock_guard<std::mutex> lock(g_SlaveListLock);
+        for (auto& ctx : g_SlaveList) {
+            if (ctx->connected && ctx->connectAddress == ip && !ctx->isBluetooth) {
+                alreadyConnected = true;
+                break;
+            }
+        }
+    }
+    if (alreadyConnected) {
+        QMessageBox::information(this, T("提示"), T("该设备已连接"));
         return;
     }
 
     g_Running = true;
+    g_IsBluetoothConn = false;
+    
+    stopListening();
+
+    g_TargetIP = ip;
+    g_TargetPort = port;
+
+    statusLabel->setText(T("正在连接"));
+    startBtn->setEnabled(false);
+    ipEdit->setEnabled(false);
+    portEdit->setEnabled(false);
+    m_btnTcpConnect->setEnabled(false);
+    macEdit->setEnabled(false);
+    m_btnBtConnect->setEnabled(false);
+    modeTcpBtn->setEnabled(false);
+    modeBtBtn->setEnabled(false);
+    deviceListWidget->setEnabled(false);
+
+    RunInQThread([this, ip, port, name]() {
+        SOCKET sockControl = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        SOCKADDR_IN sa = { 0 }; sa.sin_family = AF_INET; sa.sin_addr.s_addr = inet_addr(ip.c_str()); sa.sin_port = htons(port);
+        if (::connect(sockControl, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
+            QMetaObject::invokeMethod(this,[this]() {
+                QMessageBox::critical(this, T("错误"), T("TCP控制通道连接失败"));
+                bool hasConn = false;
+                { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
+                if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
+                else { statusLabel->setText(T("就绪")); startListening(); }
+                startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+            });
+            return;
+        }
+        NetUtils::SetNoDelay((SocketHandle)sockControl);
+        
+        SOCKET sockFile = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (::connect(sockFile, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
+            closesocket(sockControl);
+            QMetaObject::invokeMethod(this,[this]() {
+                QMessageBox::critical(this, T("错误"), T("TCP文件通道连接失败"));
+                bool hasConn = false;
+                { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
+                if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
+                else { statusLabel->setText(T("就绪")); startListening(); }
+                startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+            });
+            return;
+        }
+
+        if (!AuthMaster((SocketHandle)sockControl, name)) {
+            closesocket(sockControl);
+            closesocket(sockFile);
+            QMetaObject::invokeMethod(this,[this]() {
+                QMessageBox::critical(this, T("配对失败"), T("验证未通过或已取消。"));
+                bool hasConn = false;
+                { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
+                if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
+                else { statusLabel->setText(T("就绪")); startListening(); }
+                startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+            });
+            return;
+        }
+
+        char m = 1; send(sockControl, &m, 1, 0);
+        
+        StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, name, ip, false);
+        
+        std::shared_ptr<SlaveCtx> ctx;
+        {
+            std::lock_guard<std::mutex> lock(g_SlaveListLock);
+            for (auto& c : g_SlaveList) {
+                if (c->connectAddress == ip && c->isBluetooth == false) {
+                    ctx = c; break;
+                }
+            }
+        }
+        
+        QMetaObject::invokeMethod(this,[this, ip, port, name, ctx]() {
+            QSettings settings("MDControl", "Devices");
+            QMap<QString, QVariant> history = settings.value("TcpHistory").toMap();
+            history[QString::fromStdString(ip) + ":" + QString::number(port)] = QString::fromStdString(name);
+            settings.setValue("TcpHistory", history);
+
+            statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(name)));
+            InitOverlay();
+            refreshDeviceList();
+            
+            bool isFirst = false;
+            { std::lock_guard<std::mutex> lock(g_SlaveListLock); int cnt=0; for(auto& c:g_SlaveList) if(c->connected) cnt++; if(cnt==1) isFirst = true; }
+            if (isFirst) {
+                RunInQThread(SenderThread);
+                StartClipboardSenderThread();
+            }
+            
+            if (ctx) {
+                StartReceiverThread(ctx);
+                StartLatencyThread(ctx);
+            }
+
+            startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+        });
+    });
+}
+
+void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) {
+    char addrStr[32]; sprintf(addrStr, "%012llX", addr);
+    std::string sAddr(addrStr);
+
+    bool alreadyConnected = false;
+    {
+        std::lock_guard<std::mutex> lock(g_SlaveListLock);
+        for (auto& ctx : g_SlaveList) {
+            if (ctx->connected && ctx->connectAddress == sAddr && ctx->isBluetooth) {
+                alreadyConnected = true;
+                break;
+            }
+        }
+    }
+    if (alreadyConnected) {
+        QMessageBox::information(this, T("提示"), T("该设备已连接"));
+        return;
+    }
+
+    g_Running = true;
+    g_IsBluetoothConn = true;
     stopListening();
     
     if (g_Context->BluetoothMgr) g_Context->BluetoothMgr->StopScan();
     
-    unsigned long long addr = item->data(Qt::UserRole).toULongLong();
-    
-    QString name;
-    QWidget* widget = btListWidget->itemWidget(item);
-    if (widget) {
-        auto labels = widget->findChildren<QLabel*>();
-        for (auto* lbl : labels) {
-            if (!lbl->text().isEmpty()) {
-                name = lbl->text().split(" (").first();
-                break;
-            }
-        }
-    } else {
-        name = item->text().split(" (").first();
-    }
-    
-    char addrStr[32]; sprintf(addrStr, "%012llX", addr);
-    std::string sAddr(addrStr);
-    std::string stdName = name.toStdString();
+    std::string stdName = name;
 
     QSettings settings("MDControl", "Devices");
     QMap<QString, QVariant> history = settings.value("History").toMap();
-    history[QString::number(addr)] = name;
+    history[QString::number(addr)] = QString::fromStdString(name);
     settings.setValue("History", history);
     
-    refreshBtList();
+    refreshDeviceList();
     
     MDC_LOG_INFO(LogTag::BTH, "Initiating connection to %012llX on port 4", addr);
     statusLabel->setText(T("正在连接"));
     startBtn->setEnabled(false);
-    btListWidget->setEnabled(false);
+    deviceListWidget->setEnabled(false);
+    ipEdit->setEnabled(false);
+    portEdit->setEnabled(false);
+    m_btnTcpConnect->setEnabled(false);
+    macEdit->setEnabled(false);
+    m_btnBtConnect->setEnabled(false);
+    modeTcpBtn->setEnabled(false);
+    modeBtBtn->setEnabled(false);
 
     RunInQThread([this, addr, stdName, sAddr]() {
         Sleep(300);
@@ -1266,7 +1581,6 @@ void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
                  InterfaceSocketHandle sFile = g_Context->BluetoothMgr->Connect(addr, 5);
 
                  if (!AuthMaster((SocketHandle)sControl, stdName)) {
-                     MDC_LOG_WARN(LogTag::BTH, "BTH AuthMaster failed");
                      NetUtils::CloseSocket((SocketHandle)sControl);
                      if ((SocketHandle)sFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
                      
@@ -1276,13 +1590,13 @@ void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
                          { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
                          if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
                          else { statusLabel->setText(T("就绪")); startListening(); }
-                         startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+                         startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
                      });
                      return;
                  }
                  
                  QMetaObject::invokeMethod(this, [this]() {
-                     refreshBtList();
+                     refreshDeviceList();
                  });
                  
                  StartMasterWithSockets((SocketHandle)sControl, (SocketHandle)sFile, stdName, sAddr, true);
@@ -1320,50 +1634,67 @@ void ControlWindow::onBtItemClicked(QListWidgetItem* item) {
                          StartLatencyThread(ctx);
                      }
 
-                     startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+                     startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
                  });
             } else {
                 QMetaObject::invokeMethod(this,[this]() {
-                    QMessageBox::critical(this, T("错误"), T("TCP控制通道连接失败"));
+                    QMessageBox::critical(this, T("错误"), T("蓝牙控制通道连接失败"));
                     bool hasConn = false;
                     { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
                     if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
                     else { statusLabel->setText(T("就绪")); startListening(); }
-                    startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+                    startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
                 });
             }
         }
     });
 }
 
+void ControlWindow::onManualTcpConnect() {
+    std::string ip = ipEdit->text().toStdString();
+    int port = portEdit->text().toInt();
+    ConnectTcp(ip, port, ip);
+}
+
+void ControlWindow::onManualBtConnect() {
+    std::string mac = macEdit->text().toStdString();
+    unsigned long long addr = StrToBthAddr(mac);
+    ConnectBt(addr, mac);
+}
+
+void ControlWindow::onDeviceItemClicked(QListWidgetItem* item) {
+    bool isBT = modeBtBtn->isChecked();
+    if (isBT) {
+        unsigned long long addr = item->data(Qt::UserRole).toULongLong();
+        QString name = item->data(Qt::UserRole + 1).toString();
+        ConnectBt(addr, name.toStdString());
+    } else {
+        QString ip = item->data(Qt::UserRole).toString();
+        int port = item->data(Qt::UserRole + 1).toInt();
+        QString name = item->data(Qt::UserRole + 2).toString();
+        ConnectTcp(ip.toStdString(), port, name.toStdString());
+    }
+}
+
 void ControlWindow::onStart() {
     bool isBT = modeBtBtn->isChecked();
-    MDC_LOG_INFO(LogTag::UI, "User clicked start connection isBT: %d", isBT);
 
-    if (isBT && g_Context->BluetoothMgr && !g_Context->BluetoothMgr->IsAvailable()) {
-        QMessageBox::warning(this, T("提示"), T("蓝牙未打开或不可用"));
-        return;
-    }
-    
-    if (!isBT && !SystemUtils::HasNetworkConnectivity()) {
-        QMessageBox::warning(this, T("提示"), T("网络未连接或不可用"));
-        return;
-    }
-
-    g_Running = true;
-    g_IsBluetoothConn = isBT;
-    
-    stopListening();
-    
     if (isBT) {
+        if (g_Context->BluetoothMgr && !g_Context->BluetoothMgr->IsAvailable()) {
+            QMessageBox::warning(this, T("提示"), T("蓝牙未打开或不可用"));
+            return;
+        }
         statusLabel->setText(T("正在扫描"));
-        btListWidget->setEnabled(true);
+        deviceListWidget->setEnabled(true);
         startBtn->setEnabled(false);
-        
+        m_scannedBtDevices.clear();
+        refreshDeviceList();
+
         if (g_Context->BluetoothMgr) {
             g_Context->BluetoothMgr->StartScan([=](const BluetoothDevice& dev){
-                    QMetaObject::invokeMethod(this, [=](){
-                        bool needRefresh = false;
+                QMetaObject::invokeMethod(this, [=](){
+                    bool needRefresh = false;
+                    if (dev.name != g_MyName) { 
                         if (m_scannedBtDevices.find(dev.address) == m_scannedBtDevices.end()) {
                             m_scannedBtDevices[dev.address] = QString::fromStdString(dev.name);
                             needRefresh = true;
@@ -1371,109 +1702,52 @@ void ControlWindow::onStart() {
                             m_scannedBtDevices[dev.address] = QString::fromStdString(dev.name);
                             needRefresh = true;
                         }
-                        if (needRefresh) {
-                            refreshBtList();
-                        }
-                    });
-                },[=](const std::string& msg){
-                    QMetaObject::invokeMethod(this,[=](){ 
-                        statusLabel->setText(QString::fromStdString(msg)); 
-                        startBtn->setEnabled(true);
-                    });
-                }
-            );
+                    }
+                    if (needRefresh) {
+                        refreshDeviceList();
+                    }
+                });
+            },[=](const std::string& msg){
+                QMetaObject::invokeMethod(this,[=](){ 
+                    if (statusLabel->text() == T("正在扫描")) {
+                        statusLabel->setText(T("就绪"));
+                    }
+                    startBtn->setEnabled(true);
+                });
+            });
+        }
+    } else {
+        if (!SystemUtils::HasNetworkConnectivity()) {
+            QMessageBox::warning(this, T("提示"), T("网络未连接或不可用"));
+            return;
+        }
+        statusLabel->setText(T("正在扫描"));
+        deviceListWidget->setEnabled(true);
+        startBtn->setEnabled(false);
+        m_scannedTcpDevices.clear();
+        refreshDeviceList();
+
+        std::vector<std::string> localIPs = SystemUtils::GetLocalIPAddresses();
+
+        if (g_Context->LanDiscoveryMgr) {
+            g_Context->LanDiscoveryMgr->StartScan(5002, 5003, [this, localIPs](const std::string& ip, const std::string& name, int tcpPort) {
+                QMetaObject::invokeMethod(this, [=](){
+                    if (name == g_MyName) return;
+                    for (const auto& local_ip : localIPs) {
+                        if (ip == local_ip) return;
+                    }
+                    m_scannedTcpDevices[ip] = {name, tcpPort};
+                    refreshDeviceList();
+                });
+            });
         }
 
-    } else { 
-        g_TargetIP = ipEdit->text().toStdString();
-        g_TargetPort = portEdit->text().toInt();
-
-        statusLabel->setText(T("正在连接"));
-        startBtn->setEnabled(false);
-        ipEdit->setEnabled(false);
-        portEdit->setEnabled(false);
-        modeTcpBtn->setEnabled(false);
-        modeBtBtn->setEnabled(false);
-
-        std::string ip = g_TargetIP;
-        int port = g_TargetPort;
-
-        RunInQThread([this, ip, port]() {
-            SOCKET sockControl = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            SOCKADDR_IN sa = { 0 }; sa.sin_family = AF_INET; sa.sin_addr.s_addr = inet_addr(ip.c_str()); sa.sin_port = htons(port);
-            if (::connect(sockControl, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
-                QMetaObject::invokeMethod(this,[this]() {
-                    QMessageBox::critical(this, T("错误"), T("TCP控制通道连接失败"));
-                    bool hasConn = false;
-                    { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
-                    if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
-                    else { statusLabel->setText(T("就绪")); startListening(); }
-                    startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
-                });
-                return;
+        QTimer::singleShot(3000, this, [this]() {
+            if (g_Context->LanDiscoveryMgr) g_Context->LanDiscoveryMgr->StopScan();
+            if (statusLabel->text() == T("正在扫描")) {
+                statusLabel->setText(T("就绪"));
             }
-            NetUtils::SetNoDelay((SocketHandle)sockControl);
-            
-            SOCKET sockFile = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            if (::connect(sockFile, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
-                closesocket(sockControl);
-                QMetaObject::invokeMethod(this,[this]() {
-                    QMessageBox::critical(this, T("错误"), T("TCP文件通道连接失败"));
-                    bool hasConn = false;
-                    { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
-                    if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
-                    else { statusLabel->setText(T("就绪")); startListening(); }
-                    startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
-                });
-                return;
-            }
-
-            if (!AuthMaster((SocketHandle)sockControl, ip)) {
-                closesocket(sockControl);
-                closesocket(sockFile);
-                QMetaObject::invokeMethod(this,[this]() {
-                    QMessageBox::critical(this, T("配对失败"), T("验证未通过或已取消。"));
-                    bool hasConn = false;
-                    { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
-                    if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
-                    else { statusLabel->setText(T("就绪")); startListening(); }
-                    startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
-                });
-                return;
-            }
-
-            char m = 1; send(sockControl, &m, 1, 0);
-            
-            StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, ip, ip, false);
-            
-            std::shared_ptr<SlaveCtx> ctx;
-            {
-                std::lock_guard<std::mutex> lock(g_SlaveListLock);
-                for (auto& c : g_SlaveList) {
-                    if (c->connectAddress == ip && c->isBluetooth == false) {
-                        ctx = c; break;
-                    }
-                }
-            }
-            
-            QMetaObject::invokeMethod(this,[this, ip, ctx]() {
-                statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(ip)));
-                InitOverlay();
-                
-                bool isFirst = false;
-                { std::lock_guard<std::mutex> lock(g_SlaveListLock); int cnt=0; for(auto& c:g_SlaveList) if(c->connected) cnt++; if(cnt==1) isFirst = true; }
-                if (isFirst) {
-                    RunInQThread(SenderThread);
-                    StartClipboardSenderThread();
-                }
-                
-                if (ctx) {
-                    StartReceiverThread(ctx);
-                    StartLatencyThread(ctx);
-                }
-
-                startBtn->setEnabled(true); btListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
-            });
+            startBtn->setEnabled(true);
         });
     }
 }
@@ -1483,6 +1757,7 @@ void ControlWindow::onStop() {
     g_Running = false;
     
     if (g_Context->BluetoothMgr) g_Context->BluetoothMgr->StopScan();
+    if (g_Context->LanDiscoveryMgr) g_Context->LanDiscoveryMgr->StopScan();
     
     {
         std::lock_guard<std::mutex> lock(g_SlaveListLock);
@@ -1543,6 +1818,10 @@ void ControlWindow::onStop() {
     startBtn->setEnabled(true);
     ipEdit->setEnabled(true);
     portEdit->setEnabled(true);
+    macEdit->setEnabled(true);
+    m_btnTcpConnect->setEnabled(true);
+    m_btnBtConnect->setEnabled(true);
+    deviceListWidget->setEnabled(true);
     modeTcpBtn->setEnabled(true);
     modeBtBtn->setEnabled(true);
 
@@ -1680,6 +1959,7 @@ void ControlWindow::reconnectSlave(int idx) {
     std::string addr;
     bool isBT = false;
     std::string name;
+    int port = 5000;
 
     {
         std::lock_guard<std::mutex> lock(g_SlaveListLock);
@@ -1692,121 +1972,12 @@ void ControlWindow::reconnectSlave(int idx) {
         } else return;
     }
 
-    if (!isBT && !SystemUtils::HasNetworkConnectivity()) {
-        QMessageBox::warning(this, T("提示"), T("网络未连接或不可用"));
-        return;
+    if (!isBT) {
+        ConnectTcp(addr, port, name);
+    } else {
+        unsigned long long bthAddr = StrToBthAddr(addr);
+        ConnectBt(bthAddr, name);
     }
-
-    RunInQThread([=](){
-        if (!isBT) {
-            SOCKET sockControl = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            SOCKADDR_IN sa = { 0 }; sa.sin_family = AF_INET; sa.sin_addr.s_addr = inet_addr(addr.c_str()); sa.sin_port = htons(g_TargetPort);
-            if (::connect(sockControl, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
-                return;
-            }
-            NetUtils::SetNoDelay((SocketHandle)sockControl);
-            
-            SOCKET sockFile = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            if (::connect(sockFile, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR) {
-                closesocket(sockControl);
-                return;
-            }
-
-            if (!AuthMaster((SocketHandle)sockControl, addr)) {
-                closesocket(sockControl);
-                closesocket(sockFile);
-                QMetaObject::invokeMethod(g_MainObject,[=]() {
-                    QMessageBox::critical((QWidget*)g_MainObject, T("配对失败"), T("验证未通过或已取消。"));
-                });
-                return;
-            }
-
-            char m = 1; send(sockControl, &m, 1, 0);
-            
-            StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, name, addr, false);
-            std::shared_ptr<SlaveCtx> ctx;
-            {
-                std::lock_guard<std::mutex> lock(g_SlaveListLock);
-                for (auto& c : g_SlaveList) {
-                    if (c->connectAddress == addr && c->isBluetooth == false) {
-                        ctx = c; break;
-                    }
-                }
-            }
-            
-            QMetaObject::invokeMethod(g_MainObject, [=]() {
-                bool isFirst = false;
-                { std::lock_guard<std::mutex> lock(g_SlaveListLock); int cnt=0; for(auto& c:g_SlaveList) if(c->connected) cnt++; if(cnt==1) isFirst = true; }
-                if (isFirst) {
-                    RunInQThread(SenderThread);
-                    StartClipboardSenderThread();
-                }
-                if (ctx) {
-                    StartReceiverThread(ctx);
-                    StartLatencyThread(ctx);
-                }
-            });
-
-        } else {
-            if (g_Context->BluetoothMgr) {
-                if (!g_Context->BluetoothMgr->IsAvailable()) {
-                    QMetaObject::invokeMethod(g_MainObject,[=]() {
-                        QMessageBox::warning((QWidget*)g_MainObject, T("提示"), T("蓝牙未打开或不可用"));
-                    });
-                    return;
-                }
-                g_Context->BluetoothMgr->StopScan();
-                Sleep(300);
-                
-                unsigned long long bthAddr = StrToBthAddr(addr);
-                InterfaceSocketHandle sControl = g_Context->BluetoothMgr->Connect(bthAddr, 4);
-                if ((SocketHandle)sControl != INVALID_SOCKET_HANDLE) {
-                     InterfaceSocketHandle sFile = g_Context->BluetoothMgr->Connect(bthAddr, 5);
-
-                     if (!AuthMaster((SocketHandle)sControl, name)) {
-                         NetUtils::CloseSocket((SocketHandle)sControl);
-                         if ((SocketHandle)sFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
-                         QMetaObject::invokeMethod(g_MainObject,[=]() {
-                             QMessageBox::critical((QWidget*)g_MainObject, T("配对失败"), T("验证未通过或已取消。"));
-                         });
-                         return;
-                     }
-                     
-                     StartMasterWithSockets((SocketHandle)sControl, (SocketHandle)sFile, name, addr, true);
-                     
-                     std::shared_ptr<SlaveCtx> ctx;
-                     {
-                         std::lock_guard<std::mutex> lock(g_SlaveListLock);
-                         for (auto& c : g_SlaveList) {
-                             if (c->connectAddress == addr && c->isBluetooth == true) {
-                                 ctx = c; break;
-                             }
-                         }
-                     }
-                     
-                     if (ctx) {
-                         ctx->tcpFileFailed = true;
-                     }
-                     
-                     char handshakePkt = 20; 
-                     send((SocketHandle)sControl, &handshakePkt, 1, 0);
-                     
-                     QMetaObject::invokeMethod(g_MainObject,[=]() {
-                         bool isFirst = false;
-                         { std::lock_guard<std::mutex> lock(g_SlaveListLock); int cnt=0; for(auto& c:g_SlaveList) if(c->connected) cnt++; if(cnt==1) isFirst = true; }
-                         if (isFirst) {
-                             RunInQThread(SenderThread);
-                             StartClipboardSenderThread();
-                         }
-                         if (ctx) {
-                             StartReceiverThread(ctx);
-                             StartLatencyThread(ctx);
-                         }
-                     });
-                }
-            }
-        }
-    });
 }
 
 void ControlWindow::customEvent(QEvent *event) {
@@ -1876,8 +2047,18 @@ void ControlWindow::customEvent(QEvent *event) {
             
             if (g_MainObject) {
                 QMetaObject::invokeMethod(g_MainObject,[](){
-                    ((ControlWindow*)g_MainObject)->statusLabel->setText(T("连接已断开"));
-                    ((ControlWindow*)g_MainObject)->startListening();
+                    ControlWindow* w = (ControlWindow*)g_MainObject;
+                    w->statusLabel->setText(T("连接已断开"));
+                    w->startBtn->setEnabled(true);
+                    w->ipEdit->setEnabled(true);
+                    w->portEdit->setEnabled(true);
+                    w->macEdit->setEnabled(true);
+                    w->m_btnTcpConnect->setEnabled(true);
+                    w->m_btnBtConnect->setEnabled(true);
+                    w->deviceListWidget->setEnabled(true);
+                    w->modeTcpBtn->setEnabled(true);
+                    w->modeBtBtn->setEnabled(true);
+                    w->startListening();
                 });
             }
         } else { 
@@ -1926,14 +2107,27 @@ void ControlWindow::customEvent(QEvent *event) {
             mapWidget->update();
             
             bool hasConn = false;
+            bool isEmpty = false;
             {
                 std::lock_guard<std::mutex> lock(g_SlaveListLock);
+                isEmpty = g_SlaveList.empty();
                 for(auto& ctx : g_SlaveList) if(ctx->connected) hasConn = true;
             }
-            if (!hasConn) {
+            if (!hasConn && !isEmpty) {
                 if (g_MainObject) {
                     QMetaObject::invokeMethod(g_MainObject,[](){
-                        ((ControlWindow*)g_MainObject)->startListening();
+                        ControlWindow* w = (ControlWindow*)g_MainObject;
+                        w->statusLabel->setText(T("连接已断开"));
+                        w->startBtn->setEnabled(true);
+                        w->ipEdit->setEnabled(true);
+                        w->portEdit->setEnabled(true);
+                        w->macEdit->setEnabled(true);
+                        w->m_btnTcpConnect->setEnabled(true);
+                        w->m_btnBtConnect->setEnabled(true);
+                        w->deviceListWidget->setEnabled(true);
+                        w->modeTcpBtn->setEnabled(true);
+                        w->modeBtBtn->setEnabled(true);
+                        w->startListening();
                     });
                 }
             }

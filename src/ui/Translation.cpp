@@ -53,6 +53,14 @@ static std::map<QString, QString> dict_en_US = {
     {"断开连接", "Disconnect"},
     {"退出", "Exit"},
     {"扫描", "Scan"},
+    {"确定要删除此设备的记录吗？", "Are you sure you want to delete this device's record?"},
+    {"该设备已连接", "This device is already connected"},
+    {"该设备已连接，无法删除记录", "Device is connected, cannot delete record"},
+    {"管理配对", "Manage Pairing"},
+    {"管理配对设备", "Manage Paired Devices"},
+    {"删除选中的记录", "Delete Selected Record"},
+    {"关闭", "Close"},
+    {"确定要删除此配对记录吗？", "Are you sure to delete this pairing record?"},
     {"当前TCP网络已断开，是否继续使用蓝牙传输文件？\n（蓝牙传输速度较慢）", "TCP network disconnected. Continue using Bluetooth for file transfer?\n(Bluetooth transfer is slower)"},
     {"不再提示", "Do not show again"},
     {"错误", "Error"},
@@ -125,7 +133,8 @@ static std::map<QString, QString> dict_en_US = {
     {"放大视图", "Zoom In"},
     {"缩小视图", "Zoom Out"},
     {"蓝牙未打开或不可用", "Bluetooth is disabled or unavailable"},
-    {"网络未连接或不可用", "Network is disconnected or unavailable"}
+    {"网络未连接或不可用", "Network is disconnected or unavailable"},
+    {"未知设备", "Unknown Device"}
 };
 
 // static std::map<QString, QString> dict_ja_JP = { ... };

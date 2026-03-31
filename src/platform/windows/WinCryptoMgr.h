@@ -13,6 +13,7 @@ public:
     std::string RSAEncrypt(const std::string& pubKey, const std::string& data) override;
     std::string RSADecrypt(const std::string& privKey, const std::string& encData) override;
     std::string GenerateRandomString(int length) override;
+    std::string GetPublicKeyFingerprint(const std::string& pubKey) override;
 };
 
 #endif

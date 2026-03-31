@@ -17,6 +17,7 @@ public:
     IBluetoothMgr*  BluetoothMgr;
     IFileLockMgr*   FileLockMgr; 
     ICryptoMgr*     CryptoMgr;   
+    ILanDiscoveryMgr* LanDiscoveryMgr;
 
     // Core logic
     InputCore*      InputCore;

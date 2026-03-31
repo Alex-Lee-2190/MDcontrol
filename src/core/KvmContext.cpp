@@ -7,6 +7,7 @@ MDControlContext::MDControlContext() {
     BluetoothMgr = nullptr;
     FileLockMgr = nullptr;
     CryptoMgr = nullptr;
+    LanDiscoveryMgr = nullptr;
     InputCore = nullptr;
 }
 
@@ -17,5 +18,6 @@ MDControlContext::~MDControlContext() {
     delete BluetoothMgr;
     delete FileLockMgr;
     delete CryptoMgr;
+    delete LanDiscoveryMgr;
     delete InputCore;
 }

@@ -3,7 +3,10 @@
 #include "SystemUtils.h"
 #include <windows.h>
 #include <wincrypt.h>
+#include <bcrypt.h>
 #include <vector>
+
+#pragma comment(lib, "bcrypt.lib")
 
 WinCryptoMgr::WinCryptoMgr() {}
 WinCryptoMgr::~WinCryptoMgr() {}
@@ -167,6 +170,36 @@ std::string WinCryptoMgr::GenerateRandomString(int length) {
     std::string res;
     for (int i = 0; i < length; ++i) {
         res += charset[buf[i] % (sizeof(charset) - 1)];
+    }
+    return res;
+}
+
+std::string WinCryptoMgr::GetPublicKeyFingerprint(const std::string& pubKey) {
+    if (pubKey.empty()) return "";
+    BCRYPT_ALG_HANDLE hAlg = NULL;
+    BCRYPT_HASH_HANDLE hHash = NULL;
+    NTSTATUS status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, NULL, 0);
+    if (status != 0) return "";
+
+    DWORD cbHashObject = 0, cbData = 0, cbResult = 0;
+    status = BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH, (PBYTE)&cbData, sizeof(DWORD), &cbResult, 0);
+    status = BCryptGetProperty(hAlg, BCRYPT_OBJECT_LENGTH, (PBYTE)&cbHashObject, sizeof(DWORD), &cbResult, 0);
+
+    std::vector<BYTE> hashObject(cbHashObject);
+    std::vector<BYTE> hash(cbData);
+
+    status = BCryptCreateHash(hAlg, &hHash, hashObject.data(), cbHashObject, NULL, 0, 0);
+    status = BCryptHashData(hHash, (PBYTE)pubKey.c_str(), (ULONG)pubKey.length(), 0);
+    status = BCryptFinishHash(hHash, hash.data(), (ULONG)hash.size(), 0);
+
+    BCryptDestroyHash(hHash);
+    BCryptCloseAlgorithmProvider(hAlg, 0);
+
+    std::string res;
+    char hexBuf[3];
+    for (DWORD i = 0; i < cbData; i++) {
+        sprintf(hexBuf, "%02x", hash[i]);
+        res += hexBuf;
     }
     return res;
 }

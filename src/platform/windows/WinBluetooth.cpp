@@ -2,6 +2,7 @@
 #include "Common.h" 
 #include <winsock2.h>
 #include <ws2bth.h>
+#include <bluetoothapis.h>
 #include <thread>
 #include <cstdio>
 #include <initguid.h>
@@ -34,50 +35,49 @@ bool WinBluetoothMgr::IsAvailable() {
 void WinBluetoothMgr::StartScan(std::function<void(const BluetoothDevice&)> onDeviceFound, std::function<void(const std::string&)> onFinished) {
     if (m_scanning) return;
     m_scanning = true;
-    MDC_LOG_INFO(LogTag::BTH, "Bluetooth scan started");
+    MDC_LOG_INFO(LogTag::BTH, "Bluetooth scan started using BluetoothFindFirstDevice API");
 
     std::thread([this, onDeviceFound, onFinished]() {
-        WSAQUERYSETW qs;
-        memset(&qs, 0, sizeof(qs));
-        qs.dwSize = sizeof(qs);
-        qs.dwNameSpace = NS_BTH;
-        DWORD dwControlFlags = LUP_CONTAINERS | LUP_RETURN_NAME | LUP_RETURN_ADDR | LUP_FLUSHCACHE;
+        BLUETOOTH_DEVICE_SEARCH_PARAMS searchParams = {
+            sizeof(BLUETOOTH_DEVICE_SEARCH_PARAMS),
+            1, // fReturnAuthenticated: 返回已配对的设备
+            1, // fReturnRemembered: 返回记住的设备
+            1, // fReturnUnknown: 返回新扫描到的设备
+            1, // fReturnConnected: 返回已连接的设备
+            1, // fIssueInquiry: 发起新的空中扫描
+            4, // cTimeoutMultiplier: 超时乘数 (4 * 1.28 秒 = 5.12 秒)
+            NULL // hRadio
+        };
 
-        HANDLE hLookup;
-        if (WSALookupServiceBeginW(&qs, dwControlFlags, &hLookup) != 0) {
-            MDC_LOG_ERROR(LogTag::BTH, "WSALookupServiceBeginW failed error: %lu", GetLastError());
-            if (onFinished) onFinished("Scan Start Failed");
-            m_scanning = false;
-            return;
+        BLUETOOTH_DEVICE_INFO deviceInfo = { sizeof(BLUETOOTH_DEVICE_INFO), 0 };
+        HBLUETOOTH_DEVICE_FIND hFind = BluetoothFindFirstDevice(&searchParams, &deviceInfo);
+
+        if (hFind != NULL) {
+            do {
+                if (!m_scanning || !g_Running) break;
+
+                BluetoothDevice dev;
+                dev.address = deviceInfo.Address.ullLong;
+                
+                int len = WideCharToMultiByte(CP_UTF8, 0, deviceInfo.szName, -1, NULL, 0, NULL, NULL);
+                if (len > 1) {
+                    std::string name(len - 1, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, deviceInfo.szName, -1, &name[0], len, NULL, NULL);
+                    dev.name = name;
+                } else {
+                    dev.name = "Unknown";
+                }
+                
+                MDC_LOG_INFO(LogTag::BTH, "Bluetooth device found MAC: %012llX Name: %s", dev.address, dev.name.c_str());
+                if (onDeviceFound) onDeviceFound(dev);
+
+            } while (BluetoothFindNextDevice(hFind, &deviceInfo));
+            
+            BluetoothFindDeviceClose(hFind);
+        } else {
+            MDC_LOG_WARN(LogTag::BTH, "BluetoothFindFirstDevice returned NULL, error: %lu. No devices found.", GetLastError());
         }
 
-        char buffer[4096];
-        LPWSAQUERYSETW pResults = (LPWSAQUERYSETW)buffer;
-        DWORD dwSize = sizeof(buffer);
-
-        while (g_Running && m_scanning) {
-            dwSize = sizeof(buffer);
-            if (WSALookupServiceNextW(hLookup, LUP_RETURN_NAME | LUP_RETURN_ADDR, &dwSize, pResults) != 0) {
-                break;
-            }
-            
-            SOCKADDR_BTH* saBth = (SOCKADDR_BTH*)pResults->lpcsaBuffer->RemoteAddr.lpSockaddr;
-            BluetoothDevice dev;
-            dev.address = saBth->btAddr;
-            
-            if (pResults->lpszServiceInstanceName) {
-                int len = WideCharToMultiByte(CP_UTF8, 0, pResults->lpszServiceInstanceName, -1, NULL, 0, NULL, NULL);
-                std::string name(len - 1, 0);
-                WideCharToMultiByte(CP_UTF8, 0, pResults->lpszServiceInstanceName, -1, &name[0], len, NULL, NULL);
-                dev.name = name;
-            } else {
-                dev.name = "Unknown";
-            }
-            
-            MDC_LOG_INFO(LogTag::BTH, "Bluetooth device found MAC: %012llX Name: %s", dev.address, dev.name.c_str());
-            if (onDeviceFound) onDeviceFound(dev);
-        }
-        WSALookupServiceEnd(hLookup);
         m_scanning = false;
         MDC_LOG_INFO(LogTag::BTH, "Bluetooth scan finished");
         if (onFinished) onFinished("Scan Finished");

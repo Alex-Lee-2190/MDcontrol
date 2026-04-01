@@ -160,6 +160,15 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
 
     std::string fingerprint = g_Context->CryptoMgr->GetPublicKeyFingerprint(peerPubKey);
     bool iTrustPeer = false;
+
+    std::string displayTargetName = targetName;
+    {
+        QSettings tempAuthSettings("MDControl", "Auth");
+        QString savedName = tempAuthSettings.value("PeerNames").toMap().value(QString::fromStdString(fingerprint)).toString();
+        if (!savedName.isEmpty()) {
+            displayTargetName = savedName.toStdString();
+        }
+    }
     
     if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
         QSettings settings("MDControl", "Auth");
@@ -172,13 +181,13 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
                 settings.setValue("PeerToKey", peerToKey);
             }
             QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
-            if (peerNames.value(QString::fromStdString(fingerprint)).toString().toStdString() != targetName) {
-                peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(targetName);
+            if (peerNames.value(QString::fromStdString(fingerprint)).toString().toStdString() != displayTargetName) {
+                peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(displayTargetName);
                 settings.setValue("PeerNames", peerNames);
             }
         }
     } else {
-        QMetaObject::invokeMethod(g_MainObject, [&iTrustPeer, fingerprint, peerPubKey, targetName]() {
+        QMetaObject::invokeMethod(g_MainObject, [&iTrustPeer, fingerprint, peerPubKey, displayTargetName]() {
             QSettings settings("MDControl", "Auth");
             QStringList trustedKeys = settings.value("TrustedKeys").toStringList();
             if (trustedKeys.contains(QString::fromStdString(peerPubKey))) {
@@ -189,8 +198,8 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
                     settings.setValue("PeerToKey", peerToKey);
                 }
                 QMap<QString, QVariant> peerNames = settings.value("PeerNames").toMap();
-                if (peerNames.value(QString::fromStdString(fingerprint)).toString().toStdString() != targetName) {
-                    peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(targetName);
+                if (peerNames.value(QString::fromStdString(fingerprint)).toString().toStdString() != displayTargetName) {
+                    peerNames[QString::fromStdString(fingerprint)] = QString::fromStdString(displayTargetName);
                     settings.setValue("PeerNames", peerNames);
                 }
             }
@@ -254,7 +263,7 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
         }
     } else {
         MDC_LOG_INFO(LogTag::AUTH, "Trust missing or asymmetrical falling back to explicit PIN pairing");
-        std::string myPin = GetPinInputHelper(QString::fromStdString(targetName));
+        std::string myPin = GetPinInputHelper(QString::fromStdString(displayTargetName));
         if (myPin.empty()) {
             MDC_LOG_INFO(LogTag::AUTH, "PIN input cancelled");
             return false;
@@ -280,7 +289,7 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
 
         if (decPeerPin == myPin) {
             MDC_LOG_INFO(LogTag::AUTH, "PIN match successful saving trusted key for future RSA challenges");
-            SaveTrustedKey(peerPubKey, targetName);
+            SaveTrustedKey(peerPubKey, displayTargetName);
             return true;
         } else {
             MDC_LOG_WARN(LogTag::AUTH, "PIN match failed");
@@ -907,6 +916,7 @@ void ControlWindow::refreshDeviceList() {
         QString displayId; 
         int port; 
         QString name;
+        QString network;
         bool isHistory;
         bool isPaired;
     };
@@ -921,7 +931,7 @@ void ControlWindow::refreshDeviceList() {
             unsigned long long mac = macStr.toULongLong();
             char addrStr[32]; sprintf(addrStr, "%012llX", mac);
             QString displayId = QString::fromStdString(addrStr);
-            merged[macStr] = {macStr, displayId, 0, i.value().toString(), true, false};
+            merged[macStr] = {macStr, displayId, 0, i.value().toString(), "", true, false};
         }
         
         for (auto const& [mac, name] : m_scannedBtDevices) {
@@ -929,7 +939,7 @@ void ControlWindow::refreshDeviceList() {
             char addrStr[32]; sprintf(addrStr, "%012llX", mac);
             QString displayId = QString::fromStdString(addrStr);
             if (merged.find(macStr) == merged.end()) {
-                merged[macStr] = {macStr, displayId, 0, name, false, false};
+                merged[macStr] = {macStr, displayId, 0, name, "", false, false};
             } else {
                 if (name != "Unknown") merged[macStr].name = name;
             }
@@ -944,14 +954,24 @@ void ControlWindow::refreshDeviceList() {
             if (parts.size() == 2) {
                 QString ip = parts[0];
                 int port = parts[1].toInt();
-                merged[ipPort] = {ipPort, ip, port, i.value().toString(), true, false};
+                QVariant val = i.value();
+                QString name;
+                QString networkName;
+                if (val.canConvert<QStringList>()) {
+                    QStringList deviceInfo = val.toStringList();
+                    if (!deviceInfo.isEmpty()) name = deviceInfo.at(0);
+                    if (deviceInfo.size() > 1) networkName = deviceInfo.at(1);
+                } else {
+                    name = val.toString();
+                }
+                merged[ipPort] = {ipPort, ip, port, name, networkName, true, false};
             }
         }
         
         for (auto const& [ip, info] : m_scannedTcpDevices) {
             QString ipPort = QString::fromStdString(ip) + ":" + QString::number(info.second);
             if (merged.find(ipPort) == merged.end()) {
-                merged[ipPort] = {ipPort, QString::fromStdString(ip), info.second, QString::fromStdString(info.first), false, false};
+                merged[ipPort] = {ipPort, QString::fromStdString(ip), info.second, QString::fromStdString(info.first), "", false, false};
             } else {
                 merged[ipPort].name = QString::fromStdString(info.first);
                 merged[ipPort].port = info.second;
@@ -968,8 +988,15 @@ void ControlWindow::refreshDeviceList() {
     
     auto addToList = [&](const std::vector<DeviceItem>& list) {
         for (const auto& item : list) {
-            QString display = isBT ? QString("%1 (%2)").arg(item.name).arg(item.displayId) 
-                                   : QString("%1 (%2:%3)").arg(item.name).arg(item.displayId).arg(item.port);
+            QString display;
+            if (isBT) {
+                display = QString("%1 (%2)").arg(item.name).arg(item.displayId);
+            } else {
+                display = QString("%1 (%2:%3)").arg(item.name).arg(item.displayId).arg(item.port);
+                if (!item.network.isEmpty()) {
+                    display += QString(" [%1]").arg(item.network);
+                }
+            }
             
             QListWidgetItem* lwItem = new QListWidgetItem();
             if (isBT) {
@@ -1259,7 +1286,7 @@ void ControlWindow::startListening() {
     statusLabel->setText(T("正在监听连接"));
 }
 
-void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std::string name, std::string addr, bool isBT) {
+void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std::string& name, std::string addr, bool isBT) {
     char res[8]; 
     MDC_LOG_DEBUG(LogTag::NET, "Waiting for 8 bytes config from slave");
     if (!NetUtils::RecvAll(sockControl, res, 8)) {
@@ -1300,6 +1327,25 @@ void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std
         NetUtils::CloseSocket(sockControl);
         if(sockFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket(sockFile);
         return;
+    }
+
+    std::string realName = name;
+    if (!props.empty()) {
+        QString qProps = QString::fromStdString(props);
+        int idx = qProps.indexOf(QString::fromUtf8("设备名称: "));
+        if (idx != -1) {
+            int end = qProps.indexOf('\n', idx);
+            if (end != -1) realName = qProps.mid(idx + 6, end - idx - 6).trimmed().toStdString();
+        } else {
+            idx = qProps.indexOf("Device Name: ");
+            if (idx != -1) {
+                int end = qProps.indexOf('\n', idx);
+                if (end != -1) realName = qProps.mid(idx + 13, end - idx - 13).trimmed().toStdString();
+            }
+        }
+    }
+    if (!realName.empty()) {
+        name = realName;
     }
 
     std::shared_ptr<SlaveCtx> ctx;
@@ -1410,9 +1456,15 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
     {
         std::lock_guard<std::mutex> lock(g_SlaveListLock);
         for (auto& ctx : g_SlaveList) {
-            if (ctx->connected && ctx->connectAddress == ip && !ctx->isBluetooth) {
-                alreadyConnected = true;
-                break;
+            if (ctx->connected) {
+                if (ctx->connectAddress == ip) {
+                    alreadyConnected = true;
+                    break;
+                }
+                if (!name.empty() && ctx->name == name && name != ip) {
+                    alreadyConnected = true;
+                    break;
+                }
             }
         }
     }
@@ -1425,6 +1477,9 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
     g_IsBluetoothConn = false;
     
     stopListening();
+    if (g_Context->LanDiscoveryMgr) {
+        g_Context->LanDiscoveryMgr->StopScan();
+    }
 
     g_TargetIP = ip;
     g_TargetPort = port;
@@ -1486,7 +1541,8 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
 
         char m = 1; send(sockControl, &m, 1, 0);
         
-        StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, name, ip, false);
+        std::string mutableName = name;
+        StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, mutableName, ip, false);
         
         std::shared_ptr<SlaveCtx> ctx;
         {
@@ -1498,13 +1554,29 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
             }
         }
         
-        QMetaObject::invokeMethod(this,[this, ip, port, name, ctx]() {
+        QMetaObject::invokeMethod(this,[this, ip, port, ctx]() {
+            std::string finalName = ctx ? ctx->name : "Unknown";
+            
             QSettings settings("MDControl", "Devices");
             QMap<QString, QVariant> history = settings.value("TcpHistory").toMap();
-            history[QString::fromStdString(ip) + ":" + QString::number(port)] = QString::fromStdString(name);
+            QString networkName = QString::fromStdString(SystemUtils::GetActiveNetworkName());
+            QStringList deviceInfo;
+            deviceInfo << QString::fromStdString(finalName) << networkName;
+            history[QString::fromStdString(ip) + ":" + QString::number(port)] = deviceInfo;
             settings.setValue("TcpHistory", history);
 
-            statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(name)));
+            QSettings authSettings("MDControl", "Auth");
+            QMap<QString, QVariant> peerNames = authSettings.value("PeerNames").toMap();
+            bool changed = false;
+            for (auto it = peerNames.begin(); it != peerNames.end(); ++it) {
+                if (it.value().toString() == QString::fromStdString(ip)) {
+                    it.value() = QString::fromStdString(finalName);
+                    changed = true;
+                }
+            }
+            if (changed) authSettings.setValue("PeerNames", peerNames);
+
+            statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(finalName)));
             InitOverlay();
             refreshDeviceList();
             
@@ -1533,9 +1605,15 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
     {
         std::lock_guard<std::mutex> lock(g_SlaveListLock);
         for (auto& ctx : g_SlaveList) {
-            if (ctx->connected && ctx->connectAddress == sAddr && ctx->isBluetooth) {
-                alreadyConnected = true;
-                break;
+            if (ctx->connected) {
+                if (ctx->connectAddress == sAddr) {
+                    alreadyConnected = true;
+                    break;
+                }
+                if (!name.empty() && ctx->name == name && name != sAddr) {
+                    alreadyConnected = true;
+                    break;
+                }
             }
         }
     }
@@ -1551,13 +1629,6 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
     if (g_Context->BluetoothMgr) g_Context->BluetoothMgr->StopScan();
     
     std::string stdName = name;
-
-    QSettings settings("MDControl", "Devices");
-    QMap<QString, QVariant> history = settings.value("History").toMap();
-    history[QString::number(addr)] = QString::fromStdString(name);
-    settings.setValue("History", history);
-    
-    refreshDeviceList();
     
     MDC_LOG_INFO(LogTag::BTH, "Initiating connection to %012llX on port 4", addr);
     statusLabel->setText(T("正在连接"));
@@ -1595,11 +1666,8 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
                      return;
                  }
                  
-                 QMetaObject::invokeMethod(this, [this]() {
-                     refreshDeviceList();
-                 });
-                 
-                 StartMasterWithSockets((SocketHandle)sControl, (SocketHandle)sFile, stdName, sAddr, true);
+                 std::string mutableName = stdName;
+                 StartMasterWithSockets((SocketHandle)sControl, (SocketHandle)sFile, mutableName, sAddr, true);
                  
                  std::shared_ptr<SlaveCtx> ctx;
                  {
@@ -1618,9 +1686,28 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
                  char handshakePkt = 20; 
                  send((SocketHandle)sControl, &handshakePkt, 1, 0);
                      
-                 QMetaObject::invokeMethod(this,[this, stdName, ctx]() {
-                     statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(stdName)));
+                 QMetaObject::invokeMethod(this,[this, addr, sAddr, ctx]() {
+                     std::string finalName = ctx ? ctx->name : "Unknown";
+                     
+                     QSettings settings("MDControl", "Devices");
+                     QMap<QString, QVariant> history = settings.value("History").toMap();
+                     history[QString::number(addr)] = QString::fromStdString(finalName);
+                     settings.setValue("History", history);
+
+                     QSettings authSettings("MDControl", "Auth");
+                     QMap<QString, QVariant> peerNames = authSettings.value("PeerNames").toMap();
+                     bool changed = false;
+                     for (auto it = peerNames.begin(); it != peerNames.end(); ++it) {
+                         if (it.value().toString() == QString::fromStdString(sAddr)) {
+                             it.value() = QString::fromStdString(finalName);
+                             changed = true;
+                         }
+                     }
+                     if (changed) authSettings.setValue("PeerNames", peerNames);
+
+                     statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(finalName)));
                      InitOverlay();
+                     refreshDeviceList();
                      
                      bool isFirst = false;
                      { std::lock_guard<std::mutex> lock(g_SlaveListLock); int cnt=0; for(auto& c:g_SlaveList) if(c->connected) cnt++; if(cnt==1) isFirst = true; }
@@ -1687,7 +1774,6 @@ void ControlWindow::onStart() {
         statusLabel->setText(T("正在扫描"));
         deviceListWidget->setEnabled(true);
         startBtn->setEnabled(false);
-        m_scannedBtDevices.clear();
         refreshDeviceList();
 
         if (g_Context->BluetoothMgr) {
@@ -1711,8 +1797,8 @@ void ControlWindow::onStart() {
                 QMetaObject::invokeMethod(this,[=](){ 
                     if (statusLabel->text() == T("正在扫描")) {
                         statusLabel->setText(T("就绪"));
+                        startBtn->setEnabled(true);
                     }
-                    startBtn->setEnabled(true);
                 });
             });
         }
@@ -1724,7 +1810,6 @@ void ControlWindow::onStart() {
         statusLabel->setText(T("正在扫描"));
         deviceListWidget->setEnabled(true);
         startBtn->setEnabled(false);
-        m_scannedTcpDevices.clear();
         refreshDeviceList();
 
         std::vector<std::string> localIPs = SystemUtils::GetLocalIPAddresses();
@@ -1746,8 +1831,8 @@ void ControlWindow::onStart() {
             if (g_Context->LanDiscoveryMgr) g_Context->LanDiscoveryMgr->StopScan();
             if (statusLabel->text() == T("正在扫描")) {
                 statusLabel->setText(T("就绪"));
+                startBtn->setEnabled(true);
             }
-            startBtn->setEnabled(true);
         });
     }
 }

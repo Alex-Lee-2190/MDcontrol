@@ -14,11 +14,84 @@
 #include <shellapi.h>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QStyleHints>
+#include <QtWidgets/QApplication>
+#include <QtGui/QPalette>
+#include <QtWidgets/QStyle>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
+
+#include <QtCore/QEvent>
+#include <QtGui/QWindow>
+
+typedef HRESULT(WINAPI *DwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
+
+static void SetDarkTitleBar(HWND hwnd, bool dark) {
+    if (!hwnd) return;
+    static HMODULE hDwm = LoadLibraryA("dwmapi.dll");
+    if (hDwm) {
+        static DwmSetWindowAttribute_t pDwmSetWindowAttribute = (DwmSetWindowAttribute_t)GetProcAddress(hDwm, "DwmSetWindowAttribute");
+        if (pDwmSetWindowAttribute) {
+            BOOL bDark = dark ? TRUE : FALSE;
+            // 19 兼容旧版 Windows 10，20 兼容新版 Windows 10 和 Windows 11
+            pDwmSetWindowAttribute(hwnd, 19, &bDark, sizeof(bDark));
+            pDwmSetWindowAttribute(hwnd, 20, &bDark, sizeof(bDark));
+        }
+    }
+}
+
+// 获取 Windows 构建版本号，Win11 起始为 22000
+static DWORD GetWinBuildNumber() {
+    DWORD build = 0;
+    HMODULE hMod = GetModuleHandleW(L"ntdll.dll");
+    if (hMod) {
+        typedef struct _RTL_OSVERSIONINFOW_LOCAL {
+            DWORD dwOSVersionInfoSize;
+            DWORD dwMajorVersion;
+            DWORD dwMinorVersion;
+            DWORD dwBuildNumber;
+            DWORD dwPlatformId;
+            WCHAR szCSDVersion[128];
+        } RTL_OSVERSIONINFOW_LOCAL;
+        typedef NTSTATUS(WINAPI *RtlGetVersionPtr_Local)(RTL_OSVERSIONINFOW_LOCAL*);
+        RtlGetVersionPtr_Local pRtlGetVersion = (RtlGetVersionPtr_Local)GetProcAddress(hMod, "RtlGetVersion");
+        if (pRtlGetVersion) {
+            RTL_OSVERSIONINFOW_LOCAL rovi = {0};
+            rovi.dwOSVersionInfoSize = sizeof(rovi);
+            if (pRtlGetVersion(&rovi) == 0) {
+                build = rovi.dwBuildNumber;
+            }
+        }
+    }
+    return build;
+}
+
+class ThemeEventFilter : public QObject {
+public:
+    bool dark = false;
+
+    static ThemeEventFilter* instance() {
+        static ThemeEventFilter* s_inst = nullptr;
+        if (!s_inst && QCoreApplication::instance()) {
+            s_inst = new ThemeEventFilter();
+            QCoreApplication::instance()->installEventFilter(s_inst);
+        }
+        return s_inst;
+    }
+
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        if (event->type() == QEvent::Show) {
+            if (obj->isWindowType() || obj->isWidgetType()) {
+                for (QWindow* win : QGuiApplication::topLevelWindows()) {
+                    SetDarkTitleBar((HWND)win->winId(), dark);
+                }
+            }
+        }
+        return false;
+    }
+};
 
 namespace SystemUtils {
 
@@ -498,11 +571,12 @@ void LaunchHashTest(const std::string& targetFile) {
 
     void ApplyTheme(int mode) {
         if (!QGuiApplication::instance()) return;
-        
+
+        bool isDark = false;
         if (mode == 1) { // Light
-            QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
+            isDark = false;
         } else if (mode == 2) { // Dark
-            QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+            isDark = true;
         } else { // Auto
             DWORD value = 1;
             DWORD size = sizeof(value);
@@ -511,10 +585,51 @@ void LaunchHashTest(const std::string& targetFile) {
                 RegQueryValueExW(hKey, L"AppsUseLightTheme", NULL, NULL, (LPBYTE)&value, &size);
                 RegCloseKey(hKey);
             }
-            if (value == 0) {
-                QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+            isDark = (value == 0);
+        }
+
+        MDC_LOG_INFO(LogTag::SYS, "ApplyTheme executed: mode=%d, final isDark=%d", mode, isDark);
+        
+        QGuiApplication::styleHints()->setColorScheme(isDark ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light);
+
+        if (GetWinBuildNumber() < 22000) {
+            if (isDark) {
+                QApplication::setStyle("Fusion");
+                QPalette darkPalette;
+                darkPalette.setColor(QPalette::Window, QColor(45, 45, 48));
+                darkPalette.setColor(QPalette::WindowText, Qt::white);
+                darkPalette.setColor(QPalette::Base, QColor(30, 30, 30));
+                darkPalette.setColor(QPalette::AlternateBase, QColor(45, 45, 48));
+                darkPalette.setColor(QPalette::ToolTipBase, Qt::white);
+                darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+                darkPalette.setColor(QPalette::Text, Qt::white);
+                darkPalette.setColor(QPalette::Button, QColor(60, 60, 60));
+                darkPalette.setColor(QPalette::ButtonText, Qt::white);
+                darkPalette.setColor(QPalette::BrightText, Qt::red);
+                darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
+                darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+                darkPalette.setColor(QPalette::HighlightedText, Qt::white);
+                
+                darkPalette.setColor(QPalette::Disabled, QPalette::Text, QColor(127, 127, 127));
+                darkPalette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(127, 127, 127));
+                darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(127, 127, 127));
+                
+                QApplication::setPalette(darkPalette);
             } else {
-                QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
+                QApplication::setStyle("windowsvista");
+                QApplication::setPalette(QPalette());
+            }
+        }
+
+        ThemeEventFilter* filter = ThemeEventFilter::instance();
+        if (filter) {
+            filter->dark = isDark;
+            for (QWindow* win : QGuiApplication::topLevelWindows()) {
+                HWND hwnd = (HWND)win->winId();
+                if (hwnd) {
+                    SetDarkTitleBar(hwnd, isDark);
+                    SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                }
             }
         }
     }

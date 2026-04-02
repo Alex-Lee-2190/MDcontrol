@@ -139,7 +139,7 @@ std::string GetPinInputHelper(const QString& name) {
     }
 }
 
-bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
+bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName, std::string& outFingerprint) {
     MDC_LOG_INFO(LogTag::AUTH, "Starting strict symmetrical auth for target");
     
     std::vector<char> pkt40;
@@ -159,6 +159,7 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
     std::string peerPubKey(peerKeyData.begin(), peerKeyData.end());
 
     std::string fingerprint = g_Context->CryptoMgr->GetPublicKeyFingerprint(peerPubKey);
+    outFingerprint = fingerprint;
     bool iTrustPeer = false;
 
     std::string displayTargetName = targetName;
@@ -298,12 +299,12 @@ bool PerformSymmetricAuth(SocketHandle sock, const std::string& targetName) {
     }
 }
 
-bool AuthMaster(SocketHandle sock, const std::string& targetName) {
-    return PerformSymmetricAuth(sock, targetName);
+bool AuthMaster(SocketHandle sock, const std::string& targetName, std::string& outFingerprint) {
+    return PerformSymmetricAuth(sock, targetName, outFingerprint);
 }
 
-bool AuthSlave(SocketHandle sock) {
-    return PerformSymmetricAuth(sock, T("主控端").toStdString());
+bool AuthSlave(SocketHandle sock, std::string& outFingerprint) {
+    return PerformSymmetricAuth(sock, T("主控端").toStdString(), outFingerprint);
 }
 
 // --- PairingManagerDialog Implementation ---
@@ -1148,7 +1149,8 @@ void ControlWindow::startListening() {
                 
                 MDC_LOG_INFO(LogTag::NET, "TCP file connected");
 
-                if (!AuthSlave((SocketHandle)clientControl)) {
+                std::string peerFingerprint;
+                if (!AuthSlave((SocketHandle)clientControl, peerFingerprint)) {
                     MDC_LOG_WARN(LogTag::NET, "TCP auth failed");
                     closesocket(clientControl);
                     closesocket(clientFile);
@@ -1196,6 +1198,40 @@ void ControlWindow::startListening() {
                     g_LogicalY = ly;
                 }
 
+                std::thread([peerFingerprint]() {
+                    int retries = 50;
+                    while (retries-- > 0 && g_Running) {
+                        if (!g_MasterSysProps.empty()) {
+                            std::string realName = "Master";
+                            QString qProps = QString::fromStdString(g_MasterSysProps);
+                            int idx = qProps.indexOf(QString::fromUtf8("设备名称: "));
+                            if (idx != -1) {
+                                int end = qProps.indexOf('\n', idx);
+                                if (end != -1) realName = qProps.mid(idx + 6, end - idx - 6).trimmed().toStdString();
+                            } else {
+                                idx = qProps.indexOf("Device Name: ");
+                                if (idx != -1) {
+                                    int end = qProps.indexOf('\n', idx);
+                                    if (end != -1) realName = qProps.mid(idx + 13, end - idx - 13).trimmed().toStdString();
+                                }
+                            }
+                            if (realName != "Master" && realName != "主控端") {
+                                QMetaObject::invokeMethod(g_MainObject, [peerFingerprint, realName]() {
+                                    QSettings authSettings("MDControl", "Auth");
+                                    QMap<QString, QVariant> peerNames = authSettings.value("PeerNames").toMap();
+                                    if (peerNames.value(QString::fromStdString(peerFingerprint)).toString().toStdString() != realName) {
+                                        peerNames[QString::fromStdString(peerFingerprint)] = QString::fromStdString(realName);
+                                        authSettings.setValue("PeerNames", peerNames);
+                                        if (g_MainObject) ((ControlWindow*)g_MainObject)->refreshDeviceList();
+                                    }
+                                }, Qt::QueuedConnection);
+                            }
+                            break;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                }).detach();
+
                 if (g_MainObject) {
                     QCoreApplication::postEvent(g_MainObject, new SlaveConnectedEvent((InterfaceSocketHandle)clientControl, (InterfaceSocketHandle)clientFile));
                 } else {
@@ -1220,7 +1256,8 @@ void ControlWindow::startListening() {
                         InterfaceSocketHandle sCtrl = clients[0];
                         InterfaceSocketHandle sFile = clients.size() >= 2 ? clients[1] : (InterfaceSocketHandle)INVALID_SOCKET_HANDLE;
                         
-                        if (!AuthSlave((SocketHandle)sCtrl)) {
+                        std::string peerFingerprint;
+                        if (!AuthSlave((SocketHandle)sCtrl, peerFingerprint)) {
                             MDC_LOG_WARN(LogTag::NET, "BTH auth failed");
                             NetUtils::CloseSocket((SocketHandle)sCtrl);
                             if (sFile != (InterfaceSocketHandle)INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
@@ -1265,6 +1302,40 @@ void ControlWindow::startListening() {
                             g_LogicalY = ly;
                         }
 
+                        std::thread([peerFingerprint]() {
+                            int retries = 50;
+                            while (retries-- > 0 && g_Running) {
+                                if (!g_MasterSysProps.empty()) {
+                                    std::string realName = "Master";
+                                    QString qProps = QString::fromStdString(g_MasterSysProps);
+                                    int idx = qProps.indexOf(QString::fromUtf8("设备名称: "));
+                                    if (idx != -1) {
+                                        int end = qProps.indexOf('\n', idx);
+                                        if (end != -1) realName = qProps.mid(idx + 6, end - idx - 6).trimmed().toStdString();
+                                    } else {
+                                        idx = qProps.indexOf("Device Name: ");
+                                        if (idx != -1) {
+                                            int end = qProps.indexOf('\n', idx);
+                                            if (end != -1) realName = qProps.mid(idx + 13, end - idx - 13).trimmed().toStdString();
+                                        }
+                                    }
+                                    if (realName != "Master" && realName != "主控端") {
+                                        QMetaObject::invokeMethod(g_MainObject, [peerFingerprint, realName]() {
+                                            QSettings authSettings("MDControl", "Auth");
+                                            QMap<QString, QVariant> peerNames = authSettings.value("PeerNames").toMap();
+                                            if (peerNames.value(QString::fromStdString(peerFingerprint)).toString().toStdString() != realName) {
+                                                peerNames[QString::fromStdString(peerFingerprint)] = QString::fromStdString(realName);
+                                                authSettings.setValue("PeerNames", peerNames);
+                                                if (g_MainObject) ((ControlWindow*)g_MainObject)->refreshDeviceList();
+                                            }
+                                        }, Qt::QueuedConnection);
+                                    }
+                                    break;
+                                }
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            }
+                        }).detach();
+
                         if (g_MainObject) {
                             QCoreApplication::postEvent(g_MainObject, new SlaveConnectedEvent(sCtrl, sFile));
                         } else {
@@ -1286,7 +1357,7 @@ void ControlWindow::startListening() {
     statusLabel->setText(T("正在监听连接"));
 }
 
-void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std::string& name, std::string addr, bool isBT) {
+void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std::string& name, std::string addr, bool isBT, const std::string& fingerprint) {
     char res[8]; 
     MDC_LOG_DEBUG(LogTag::NET, "Waiting for 8 bytes config from slave");
     if (!NetUtils::RecvAll(sockControl, res, 8)) {
@@ -1377,6 +1448,7 @@ void StartMasterWithSockets(SocketHandle sockControl, SocketHandle sockFile, std
     ctx->isBluetooth = isBT;
     ctx->tcpFileFailed = false; 
     ctx->lastSentTopo = "";
+    ctx->fingerprint = fingerprint;
     
     {
         std::lock_guard<std::mutex> lock(g_SlaveListLock);
@@ -1525,7 +1597,8 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
             return;
         }
 
-        if (!AuthMaster((SocketHandle)sockControl, name)) {
+        std::string peerFingerprint;
+        if (!AuthMaster((SocketHandle)sockControl, name, peerFingerprint)) {
             closesocket(sockControl);
             closesocket(sockFile);
             QMetaObject::invokeMethod(this,[this]() {
@@ -1539,10 +1612,34 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
             return;
         }
 
+        bool fingerprintConnected = false;
+        {
+            std::lock_guard<std::mutex> lock(g_SlaveListLock);
+            for (auto& c : g_SlaveList) {
+                if (c->connected && c->fingerprint == peerFingerprint) {
+                    fingerprintConnected = true;
+                    break;
+                }
+            }
+        }
+        if (fingerprintConnected) {
+            closesocket(sockControl);
+            closesocket(sockFile);
+            QMetaObject::invokeMethod(this,[this]() {
+                QMessageBox::information(this, T("提示"), T("该设备已连接"));
+                bool hasConn = false;
+                { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
+                if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
+                else { statusLabel->setText(T("就绪")); startListening(); }
+                startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+            });
+            return;
+        }
+
         char m = 1; send(sockControl, &m, 1, 0);
         
         std::string mutableName = name;
-        StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, mutableName, ip, false);
+        StartMasterWithSockets((SocketHandle)sockControl, (SocketHandle)sockFile, mutableName, ip, false, peerFingerprint);
         
         std::shared_ptr<SlaveCtx> ctx;
         {
@@ -1554,7 +1651,7 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
             }
         }
         
-        QMetaObject::invokeMethod(this,[this, ip, port, ctx]() {
+        QMetaObject::invokeMethod(this,[this, ip, port, ctx, peerFingerprint]() {
             std::string finalName = ctx ? ctx->name : "Unknown";
             
             QSettings settings("MDControl", "Devices");
@@ -1567,14 +1664,10 @@ void ControlWindow::ConnectTcp(const std::string& ip, int port, const std::strin
 
             QSettings authSettings("MDControl", "Auth");
             QMap<QString, QVariant> peerNames = authSettings.value("PeerNames").toMap();
-            bool changed = false;
-            for (auto it = peerNames.begin(); it != peerNames.end(); ++it) {
-                if (it.value().toString() == QString::fromStdString(ip)) {
-                    it.value() = QString::fromStdString(finalName);
-                    changed = true;
-                }
+            if (peerNames.value(QString::fromStdString(peerFingerprint)).toString().toStdString() != finalName) {
+                peerNames[QString::fromStdString(peerFingerprint)] = QString::fromStdString(finalName);
+                authSettings.setValue("PeerNames", peerNames);
             }
-            if (changed) authSettings.setValue("PeerNames", peerNames);
 
             statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(finalName)));
             InitOverlay();
@@ -1651,7 +1744,8 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
                  MDC_LOG_INFO(LogTag::BTH, "Control connection established. Initiating file connection");
                  InterfaceSocketHandle sFile = g_Context->BluetoothMgr->Connect(addr, 5);
 
-                 if (!AuthMaster((SocketHandle)sControl, stdName)) {
+                 std::string peerFingerprint;
+                 if (!AuthMaster((SocketHandle)sControl, stdName, peerFingerprint)) {
                      NetUtils::CloseSocket((SocketHandle)sControl);
                      if ((SocketHandle)sFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
                      
@@ -1666,8 +1760,32 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
                      return;
                  }
                  
+                 bool fingerprintConnected = false;
+                 {
+                     std::lock_guard<std::mutex> lock(g_SlaveListLock);
+                     for (auto& c : g_SlaveList) {
+                         if (c->connected && c->fingerprint == peerFingerprint) {
+                             fingerprintConnected = true;
+                             break;
+                         }
+                     }
+                 }
+                 if (fingerprintConnected) {
+                     NetUtils::CloseSocket((SocketHandle)sControl);
+                     if ((SocketHandle)sFile != INVALID_SOCKET_HANDLE) NetUtils::CloseSocket((SocketHandle)sFile);
+                     QMetaObject::invokeMethod(this, [this]() {
+                         QMessageBox::information(this, T("提示"), T("该设备已连接"));
+                         bool hasConn = false;
+                         { std::lock_guard<std::mutex> lock(g_SlaveListLock); for (auto& c : g_SlaveList) if (c->connected) hasConn = true; }
+                         if (hasConn) statusLabel->setText(T("连接失败，保持现有连接"));
+                         else { statusLabel->setText(T("就绪")); startListening(); }
+                         startBtn->setEnabled(true); deviceListWidget->setEnabled(true); ipEdit->setEnabled(true); portEdit->setEnabled(true); m_btnTcpConnect->setEnabled(true); macEdit->setEnabled(true); m_btnBtConnect->setEnabled(true); modeTcpBtn->setEnabled(true); modeBtBtn->setEnabled(true);
+                     });
+                     return;
+                 }
+
                  std::string mutableName = stdName;
-                 StartMasterWithSockets((SocketHandle)sControl, (SocketHandle)sFile, mutableName, sAddr, true);
+                 StartMasterWithSockets((SocketHandle)sControl, (SocketHandle)sFile, mutableName, sAddr, true, peerFingerprint);
                  
                  std::shared_ptr<SlaveCtx> ctx;
                  {
@@ -1686,7 +1804,7 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
                  char handshakePkt = 20; 
                  send((SocketHandle)sControl, &handshakePkt, 1, 0);
                      
-                 QMetaObject::invokeMethod(this,[this, addr, sAddr, ctx]() {
+                 QMetaObject::invokeMethod(this,[this, addr, sAddr, ctx, peerFingerprint]() {
                      std::string finalName = ctx ? ctx->name : "Unknown";
                      
                      QSettings settings("MDControl", "Devices");
@@ -1696,14 +1814,10 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
 
                      QSettings authSettings("MDControl", "Auth");
                      QMap<QString, QVariant> peerNames = authSettings.value("PeerNames").toMap();
-                     bool changed = false;
-                     for (auto it = peerNames.begin(); it != peerNames.end(); ++it) {
-                         if (it.value().toString() == QString::fromStdString(sAddr)) {
-                             it.value() = QString::fromStdString(finalName);
-                             changed = true;
-                         }
+                     if (peerNames.value(QString::fromStdString(peerFingerprint)).toString().toStdString() != finalName) {
+                         peerNames[QString::fromStdString(peerFingerprint)] = QString::fromStdString(finalName);
+                         authSettings.setValue("PeerNames", peerNames);
                      }
-                     if (changed) authSettings.setValue("PeerNames", peerNames);
 
                      statusLabel->setText(T("已连接: %1").arg(QString::fromStdString(finalName)));
                      InitOverlay();
@@ -1738,12 +1852,20 @@ void ControlWindow::ConnectBt(unsigned long long addr, const std::string& name) 
 }
 
 void ControlWindow::onManualTcpConnect() {
+    if (!SystemUtils::HasNetworkConnectivity()) {
+        QMessageBox::warning(this, T("提示"), T("网络未连接或不可用"));
+        return;
+    }
     std::string ip = ipEdit->text().toStdString();
     int port = portEdit->text().toInt();
     ConnectTcp(ip, port, ip);
 }
 
 void ControlWindow::onManualBtConnect() {
+    if (g_Context->BluetoothMgr && !g_Context->BluetoothMgr->IsAvailable()) {
+        QMessageBox::warning(this, T("提示"), T("蓝牙未打开或不可用"));
+        return;
+    }
     std::string mac = macEdit->text().toStdString();
     unsigned long long addr = StrToBthAddr(mac);
     ConnectBt(addr, mac);

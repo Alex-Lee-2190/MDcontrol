@@ -212,6 +212,7 @@ struct SlaveCtx {
     std::string lastSentTopo;
     std::mutex sendLock; 
     std::mutex fileSendLock;
+    std::string fingerprint;
 
     SlaveCtx() : sock(INVALID_SOCKET_HANDLE), fileSock(INVALID_SOCKET_HANDLE), btFileSock(INVALID_SOCKET_HANDLE), width(0), height(0), logicalX(0.0), logicalY(0.0), ratioX(1.0), ratioY(1.0), latency(0), connected(true), isBluetooth(false), scale(1.0) {}
 };

@@ -961,5 +961,89 @@ void MapWidget::keyPressEvent(QKeyEvent* event) {
             return;
         }
     }
+
+    bool isSlaveMode = (g_ClientSock != INVALID_SOCKET_HANDLE);
+    if (!isSlaveMode && m_selectedDeviceIdx >= 0 && 
+        (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down || 
+         event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {
+        
+        std::shared_ptr<SlaveCtx> ctx;
+        {
+            std::lock_guard<std::mutex> lock(g_SlaveListLock);
+            if (m_selectedDeviceIdx < (int)g_SlaveList.size()) {
+                ctx = g_SlaveList[m_selectedDeviceIdx];
+            }
+        }
+
+        if (ctx && ctx->connected && ctx->sock != INVALID_SOCKET_HANDLE) {
+            double dx = 0;
+            double dy = 0;
+            if (event->key() == Qt::Key_Up) dy = -1.0;
+            else if (event->key() == Qt::Key_Down) dy = 1.0;
+            else if (event->key() == Qt::Key_Left) dx = -1.0;
+            else if (event->key() == Qt::Key_Right) dx = 1.0;
+
+            double newLogicalX = ctx->logicalX + dx;
+            double newLogicalY = ctx->logicalY + dy;
+
+            double slaveLogW = ctx->width / ctx->scale;
+            double slaveLogH = ctx->height / ctx->scale;
+            QRectF movingRect(newLogicalX, newLogicalY, slaveLogW, slaveLogH);
+
+            double logicalMW = g_LocalW / g_LocalScale;
+            double logicalMH = g_LocalH / g_LocalScale;
+            std::vector<QRectF> snapTargets;
+            snapTargets.push_back(QRectF(0, 0, logicalMW, logicalMH));
+            
+            {
+                std::lock_guard<std::mutex> lock(g_SlaveListLock);
+                for (size_t k = 0; k < g_SlaveList.size(); ++k) {
+                    if ((int)k == m_selectedDeviceIdx || !g_SlaveList[k]->connected) continue;
+                    double ow = g_SlaveList[k]->width / g_SlaveList[k]->scale;
+                    double oh = g_SlaveList[k]->height / g_SlaveList[k]->scale;
+                    snapTargets.push_back(QRectF(g_SlaveList[k]->logicalX, g_SlaveList[k]->logicalY, ow, oh));
+                }
+            }
+
+            bool collision = false;
+            for (const auto& tr : snapTargets) {
+                if (movingRect.adjusted(1, 1, -1, -1).intersects(tr)) {
+                    collision = true;
+                    break;
+                }
+            }
+
+            if (!collision) {
+                ctx->logicalX = newLogicalX;
+                ctx->logicalY = newLogicalY;
+
+                if (g_RememberPos) {
+                    QSettings settings("MDControl", "DevicePositions");
+                    QString key = QString::fromStdString(ctx->connectAddress) + (ctx->isBluetooth ? "_BT" : "_TCP");
+                    settings.setValue(key + "_X", ctx->logicalX);
+                    settings.setValue(key + "_Y", ctx->logicalY);
+                }
+
+                char buf[25];
+                buf[0] = 10;
+                unsigned int mW = htonl(g_LocalW);
+                unsigned int mH = htonl(g_LocalH);
+                memcpy(buf + 1, &mW, 4);
+                memcpy(buf + 5, &mH, 4);
+                double lX = ctx->logicalX;
+                double lY = ctx->logicalY;
+                memcpy(buf + 9, &lX, 8);
+                memcpy(buf + 17, &lY, 8);
+                
+                std::lock_guard<std::mutex> lock(ctx->sendLock);
+                send(ctx->sock, buf, 25, 0);
+
+                update();
+            }
+            event->accept();
+            return;
+        }
+    }
+
     QWidget::keyPressEvent(event);
 }

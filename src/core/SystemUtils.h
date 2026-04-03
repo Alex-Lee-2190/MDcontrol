@@ -20,6 +20,9 @@ namespace SystemUtils {
     // Set process to high priority
     void SetProcessHighPriority();
 
+    // Set current thread to background priority
+    void SetThreadBackgroundPriority();
+
     // Initialize DPI awareness
     void InitDPI();
 

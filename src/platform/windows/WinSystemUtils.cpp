@@ -195,6 +195,10 @@ namespace SystemUtils {
         SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
     }
 
+    void SetThreadBackgroundPriority() {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    }
+
     void InitDPI() {
         SetProcessDPIAware();
     }
@@ -500,7 +504,7 @@ namespace SystemUtils {
         }
 
         char fileName[128];
-        sprintf(fileName, "\\MDC_%s_%04d.log", s_startupTime.c_str(), s_fileIndex);
+        sprintf(fileName, "\\MDC_%s_%04d.log", s_startupTime.c_str());
         std::string fullPath = s_logDirPath + fileName;
 
         FILE* f = fopen(fullPath.c_str(), "a");

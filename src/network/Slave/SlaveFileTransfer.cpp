@@ -33,6 +33,7 @@ static void LaunchHashTest(const std::string& targetFile) {
 }
 
 void FileNetworkReceiver() {
+    SystemUtils::SetThreadBackgroundPriority();
     std::vector<char> buffer(1024 * 1024 * 4);
     int offset = 0;
     SocketHandle mySock = g_ClientFileSock;
@@ -86,6 +87,7 @@ void FileNetworkReceiver() {
                 }
 
                 std::thread([taskId, localRoots]() {
+                    SystemUtils::SetThreadBackgroundPriority();
                     std::shared_ptr<FileTransferTask> task;
                     {
                         std::lock_guard<std::mutex> lock(g_TaskMutex);
@@ -195,11 +197,12 @@ void FileNetworkReceiver() {
 
                     for(int i=0; i<threadCount; ++i) {
                         workers.emplace_back([&]() {
+                            SystemUtils::SetThreadBackgroundPriority();
                             std::vector<FileClipInfo> localBatch;
                             localBatch.reserve(1000); 
 
                             while(true) {
-                                if (task->cancelled) return; 
+                                if (task->cancelled) break; 
 
                                 size_t idx = nextJobIdx.fetch_add(1);
                                 if (idx >= jobQueue.size()) break;
@@ -207,7 +210,7 @@ void FileNetworkReceiver() {
                                 Job currentJob = jobQueue[idx];
                                 try {
                                     for (const auto& entry : fs::recursive_directory_iterator(currentJob.path, fs::directory_options::skip_permission_denied)) {
-                                        if (task->cancelled) return; 
+                                        if (task->cancelled) break; 
 
                                         bool isFile = entry.is_regular_file();
                                         bool isDir = entry.is_directory();
@@ -317,6 +320,7 @@ void FileNetworkReceiver() {
                 processed += 17;
                 
                 std::thread([taskId, fileIdx, resumeOffset]() {
+                    SystemUtils::SetThreadBackgroundPriority();
                     std::shared_ptr<FileTransferTask> task;
                     {
                         std::lock_guard<std::mutex> lock(g_TaskMutex);
@@ -519,7 +523,7 @@ void FileNetworkReceiver() {
                                         
                                         currentFileOffset += bytesRead;
                                         
-                                        std::this_thread::yield(); 
+                                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
                                         
                                         if (isBt) {
                                             tokens -= bytesRead;
@@ -846,6 +850,7 @@ void FileNetworkReceiver() {
                 processed += reqLen;
 
                 std::thread([taskId, rawConfs]() {
+                    SystemUtils::SetThreadBackgroundPriority();
                     std::vector<ConflictItem> items;
                     std::shared_ptr<FileTransferTask> task;
                     {
@@ -1267,5 +1272,28 @@ void FileNetworkReceiver() {
                 buffer.resize(buffer.size() * 2);
             }
         } else offset = 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_TaskMutex);
+        for (auto& kv : g_TransferTasks) {
+            auto task = kv.second;
+            if (task && !task->cancelled) {
+                task->cancelled = true;
+                for (auto& fkv : task->receivingFiles) {
+                    if (fkv.second) {
+                        fkv.second->flush();
+                        fkv.second->close();
+                    }
+                }
+                task->receivingFiles.clear();
+                if (g_Context->FileLockMgr) {
+                    for (const auto& pkv : task->tempFilePaths) {
+                        g_Context->FileLockMgr->UnlockPath(pkv.second);
+                    }
+                }
+                task->tempFilePaths.clear();
+            }
+        }
     }
 }

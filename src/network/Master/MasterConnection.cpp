@@ -8,6 +8,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <fstream>
 
 unsigned long long StrToBthAddr(const std::string& str) {
     unsigned long long addr = 0;
@@ -182,25 +183,6 @@ void ReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 if (pathLen < 0 || remaining < p + pathLen) break;
                 std::string targetPath(ptr + p, pathLen); p += pathLen;
 
-                int connectedSlaves = 0;
-                {
-                    std::lock_guard<std::mutex> lk(g_SlaveListLock);
-                    for(auto& s : g_SlaveList) if(s->connected) connectedSlaves++;
-                }
-                if (connectedSlaves > 1) {
-                    std::lock_guard<std::mutex> tLock(g_TaskMutex);
-                    if (!g_TransferTasks.empty()) {
-                        char cancelPkt[5];
-                        cancelPkt[0] = 19;
-                        unsigned int nT = htonl(taskId);
-                        memcpy(cancelPkt + 1, &nT, 4);
-                        std::lock_guard<std::mutex> sendLock(ctx->sendLock);
-                        send(ctx->sock, cancelPkt, 5, 0);
-                        processed += p;
-                        continue;
-                    }
-                }
-                
                 if (g_RemoteFilesAvailable) {
                     auto srcCtx = g_RemoteFileSource.lock();
                     if (srcCtx && srcCtx != ctx) {

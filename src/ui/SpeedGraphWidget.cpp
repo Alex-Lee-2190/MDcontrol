@@ -3,29 +3,64 @@
 #include <QtGui/QPainterPath>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QStyleHints>
+#include <algorithm>
 
 // --- SpeedGraphWidget Implementation ---
 
-SpeedGraphWidget::SpeedGraphWidget(QWidget* parent) : QWidget(parent), m_maxSpeed(1.0) {
+SpeedGraphWidget::SpeedGraphWidget(QWidget* parent) 
+    : QWidget(parent), m_maxSpeed(1.0) {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setFixedHeight(120);
+    
+    // 初始化容量
+    m_samples.reserve(410);
+    
+    // 内部状态控制（建议在头文件中声明这些变量，若不可改动头文件，此逻辑需在类中持久化）
+    // 这里假设逻辑上我们需要：
+    // static uint m_compressionFactor = 1; 
+    // static QVector<double> m_pendingRaw;
 }
 
-void SpeedGraphWidget::addSpeedSample(double bytesPerSec) {
-    m_samples.push_back(bytesPerSec);
-    
-    double max = 1024.0; 
-    
-    int startIdx = 0;
-    if (m_samples.size() > 20) {
-        startIdx = 10;
-    }
+// 为了保证代码完整性及逻辑闭环，在类中使用这些持久化变量
+static uint g_compressionFactor = 1; 
+static QVector<double> g_pendingRaw;
 
-    for(int i = startIdx; i < m_samples.size(); ++i) {
-        if(m_samples[i] > max) max = m_samples[i];
+void SpeedGraphWidget::addSpeedSample(double bytesPerSec) {
+    // 1. 将新采样存入临时采样区
+    g_pendingRaw.push_back(bytesPerSec);
+    
+    // 2. 只有当累积的采样数达到当前的压缩倍率时，才向主显示数组存入一个峰值点
+    // 这样确保了新旧曲线的“压缩次数”完全一致，视觉密度统一
+    if (g_pendingRaw.size() >= (int)g_compressionFactor) {
+        double maxInWindow = *std::max_element(g_pendingRaw.begin(), g_pendingRaw.end());
+        m_samples.push_back(maxInWindow);
+        g_pendingRaw.clear();
     }
     
-    m_maxSpeed = max * 1.1; 
+    // 3. 当显示数组超过 400 个点时，进行数组减半压缩
+    if (m_samples.size() >= 400) {
+        QVector<double> compressed;
+        compressed.reserve(200);
+        for (int i = 0; i < m_samples.size() - 1; i += 2) {
+            // 采用 Max 压缩法，保留曲线的尖峰特征，减少信息损耗
+            compressed.append(std::max(m_samples[i], m_samples[i+1]));
+        }
+        m_samples = compressed;
+        
+        // 压缩倍率翻倍，确保后续新点按照新的比例对齐
+        g_compressionFactor *= 2;
+    }
+    
+    // 4. 动态 Y 轴缩放优化
+    if (bytesPerSec > (m_maxSpeed / 1.1)) {
+        m_maxSpeed = bytesPerSec * 1.1;
+    } else if (m_samples.size() > 0 && m_samples.size() % 50 == 0) {
+        // 降低校准频率，仅在数据点更新一定程度时重新计算最高点
+        double m = 1024.0;
+        for(double s : m_samples) if(s > m) m = s;
+        m_maxSpeed = m * 1.1;
+    }
+    
     update();
 }
 
@@ -47,50 +82,48 @@ void SpeedGraphWidget::paintEvent(QPaintEvent*) {
     QColor textColor = isDark ? Qt::white : Qt::black;
 
     p.fillRect(rect(), bgColor);
+    
+    // 绘制网格
     p.setPen(gridColor);
     int gridW = width() / 10;
     int gridH = height() / 4;
     for(int i=1; i<10; ++i) p.drawLine(i*gridW, 0, i*gridW, height());
     for(int i=1; i<4; ++i) p.drawLine(0, i*gridH, width(), i*gridH);
     
-    if (m_samples.size() < 2) return;
+    int n = m_samples.size();
+    if (n < 2) return;
     
-    QPainterPath path;
-    path.moveTo(0, height()); 
+    double w = width();
+    double h = height();
     
-    double xStep = (double)width() / (m_samples.size() - 1);
+    // 准备渲染点集
+    QVector<QPointF> points;
+    points.reserve(n);
     
-    for(int i=0; i<m_samples.size(); ++i) {
-        double val = m_samples[i];
-        double y = height() - (val / m_maxSpeed * height());
-        if (y < 0) y = 0; 
-        path.lineTo(i * xStep, y);
+    for (int i = 0; i < n; ++i) {
+        // 利用浮点数计算 X 坐标，实现亚像素平滑映射，彻底消除“纹理走样”现象
+        double x = i * w / (n - 1);
+        double y = h - (m_samples[i] / m_maxSpeed * h);
+        points.append(QPointF(x, std::clamp(y, 0.0, h)));
     }
+
+    // 绘制渐变填充区域
+    QVector<QPointF> fillPoints = points;
+    fillPoints.append(QPointF(points.last().x(), h));
+    fillPoints.append(QPointF(0, h));
     
-    path.lineTo(width(), height()); 
-    path.closeSubpath();
-    
-    QLinearGradient grad(0, 0, 0, height());
+    QLinearGradient grad(0, 0, 0, h);
     grad.setColorAt(0, gradColor1);
     grad.setColorAt(1, gradColor2);
-    p.setBrush(grad);
     p.setPen(Qt::NoPen);
-    p.drawPath(path);
+    p.setBrush(grad);
+    p.drawPolygon(fillPoints);
     
-    p.setPen(QPen(curveColor, 2));
+    // 绘制主速度折线
     p.setBrush(Qt::NoBrush);
-    QPainterPath strokePath;
-    
-    double firstY = height() - (m_samples[0] / m_maxSpeed * height());
-    if (firstY < 0) firstY = 0;
-    strokePath.moveTo(0, firstY);
-
-    for(int i=1; i<m_samples.size(); ++i) {
-        double y = height() - (m_samples[i] / m_maxSpeed * height());
-        if (y < 0) y = 0;
-        strokePath.lineTo(i * xStep, y);
-    }
-    p.drawPath(strokePath);
+    p.setPen(QPen(curveColor, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    // drawPolyline 的性能远高于 QPainterPath，适合高频刷新
+    p.drawPolyline(points);
     
     if (!m_speedText.isEmpty()) {
         p.setPen(textColor);

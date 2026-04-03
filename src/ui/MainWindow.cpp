@@ -2341,19 +2341,6 @@ void ControlWindow::customEvent(QEvent *event) {
         }
     }
     else if (event->type() == MDControlEvent_PrepareFileDownload) {
-        int connectedSlaves = 0;
-        {
-            std::lock_guard<std::mutex> lk(g_SlaveListLock);
-            for(auto& s : g_SlaveList) if(s->connected) connectedSlaves++;
-        }
-        if (connectedSlaves > 1) {
-            std::lock_guard<std::mutex> tLock(g_TaskMutex);
-            if (!g_TransferTasks.empty()) {
-                QMessageBox::warning(this, T("提示"), T("多设备连接时，同时只能进行一个文件传输任务。"));
-                return;
-            }
-        }
-
         SetMasterDownloadTarget(); 
 
         auto sCtx = g_RemoteFileSource.lock();

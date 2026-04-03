@@ -288,24 +288,26 @@ bool InputCore::ProcessKey(int vk, int scan, bool down, bool sys) {
         if (vk == 0x56 && down) { 
             if (m_ctrlDown) {
                 if (g_HasFileUpdate) {
-                    int connectedSlaves = 0;
-                    {
-                        std::lock_guard<std::mutex> lk(g_SlaveListLock);
-                        for(auto& s : g_SlaveList) if(s->connected) connectedSlaves++;
-                    }
-                    if (connectedSlaves > 1) {
-                        std::lock_guard<std::mutex> tLock(g_TaskMutex);
-                        if (!g_TransferTasks.empty()) {
-                            QMetaObject::invokeMethod(g_MainObject, [](){
-                                QMessageBox::warning((QWidget*)g_MainObject, T("提示"), T("多设备连接时，同时只能进行一个文件传输任务。"));
-                            });
-                            return true; 
+                    bool isSameDevice = false;
+                    if (g_RemoteFilesAvailable) {
+                        auto srcCtx = g_RemoteFileSource.lock();
+                        if (srcCtx) {
+                            std::lock_guard<std::mutex> lk(g_SlaveListLock);
+                            int activeIdx = g_ActiveSlaveIdx.load();
+                            if (activeIdx >= 0 && activeIdx < (int)g_SlaveList.size()) {
+                                if (srcCtx == g_SlaveList[activeIdx]) {
+                                    isSameDevice = true;
+                                }
+                            }
                         }
                     }
-                    MDC_LOG_INFO(LogTag::KVM, "Trigger file paste event Type 8");
-                    g_HasFileUpdate = false; 
-                    SendEvent(8, 0, 0, g_ActiveSlaveIdx.load()); 
-                    return true; 
+                    if (!isSameDevice) {
+                        MDC_LOG_INFO(LogTag::KVM, "Trigger file paste event Type 8");
+                        g_HasFileUpdate = false; 
+                        uint32_t newTaskId = g_NextTaskId++;
+                        SendEvent(8, (int)newTaskId, 0, g_ActiveSlaveIdx.load()); 
+                        return true; 
+                    }
                 }
             }
         }

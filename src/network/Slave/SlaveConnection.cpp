@@ -7,6 +7,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <fstream>
 
 void NetworkReceiver() {
     std::vector<char> buffer(1024 * 1024 * 4);
@@ -55,7 +56,7 @@ void NetworkReceiver() {
                         std::string targetPath = SystemUtils::GetCurrentExplorerPath();
                         if (targetPath.empty()) targetPath = g_FallbackTransferPath;
                         
-                        uint32_t taskId = g_NextTaskId++;
+                        uint32_t taskId = (uint32_t)p1;
                         taskId |= 0x80000000;
                         
                         auto task = std::make_shared<FileTransferTask>();
@@ -354,6 +355,12 @@ void NetworkReceiver() {
                     if (g_TransferTasks.count(taskId)) {
                         task = g_TransferTasks[taskId];
                         task->cancelled = true;
+                        for (auto& fkv : task->receivingFiles) {
+                            if (fkv.second) {
+                                fkv.second->flush();
+                                fkv.second->close();
+                            }
+                        }
                         task->receivingFiles.clear();
                         if (g_Context->FileLockMgr) {
                             for (const auto& kv : task->tempFilePaths) {

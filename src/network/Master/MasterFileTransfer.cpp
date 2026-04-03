@@ -153,11 +153,12 @@ void MasterSendFileThread(std::shared_ptr<SlaveCtx> ctx, uint32_t taskId, std::v
 
     for(int i=0; i<threadCount; ++i) {
         workers.emplace_back([&]() {
+            SystemUtils::SetThreadBackgroundPriority();
             std::vector<FileClipInfo> localBatch;
             localBatch.reserve(1000); 
 
             while(true) {
-                if (task->cancelled) return; 
+                if (task->cancelled) break; 
 
                 size_t idx = nextJobIdx.fetch_add(1);
                 if (idx >= jobQueue.size()) break;
@@ -165,7 +166,7 @@ void MasterSendFileThread(std::shared_ptr<SlaveCtx> ctx, uint32_t taskId, std::v
                 Job currentJob = jobQueue[idx];
                 try {
                     for (const auto& entry : fs::recursive_directory_iterator(currentJob.path, fs::directory_options::skip_permission_denied)) {
-                        if (task->cancelled) return; 
+                        if (task->cancelled) break; 
 
                         bool isFile = entry.is_regular_file();
                         bool isDir = entry.is_directory();
@@ -274,6 +275,7 @@ extern std::map<std::pair<void*, uint32_t>, uint32_t> g_RelayByDestId;
 extern std::mutex g_RelayMutex;
 
 void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
+    SystemUtils::SetThreadBackgroundPriority();
     std::vector<char> buffer(1024 * 1024 * 4);
     int offset = 0;
     SocketHandle mySock = ctx->fileSock;
@@ -307,10 +309,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(srcTaskId);
                             std::vector<char> relayData(ptr, ptr + 17);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -326,6 +337,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 processed += 17;
                 
                 std::thread([ctx, taskId, fileIdx, resumeOffset]() {
+                    SystemUtils::SetThreadBackgroundPriority();
                     std::shared_ptr<FileTransferTask> task;
                     {
                         std::lock_guard<std::mutex> lock(g_TaskMutex);
@@ -527,7 +539,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                         
                                         currentFileOffset += bytesRead;
                                         
-                                        std::this_thread::yield(); 
+                                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
                                         
                                         if (isBt) {
                                             tokens -= bytesRead;
@@ -596,10 +608,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(dstTaskId);
                             std::vector<char> relayData(ptr, ptr + 17);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -651,10 +672,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(dstTaskId);
                             std::vector<char> relayData(ptr, ptr + tempOffset);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -689,6 +719,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                     task->totalFilesToReceive = infos.size();
 
                     std::thread([task, ctx, taskId, infos]() {
+                        SystemUtils::SetThreadBackgroundPriority();
                         std::set<std::string> targetExistingPaths;
                         try {
                             fs::path targetBase = fs::u8path(task->targetPath);
@@ -891,10 +922,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(srcTaskId);
                             std::vector<char> relayData(ptr, ptr + reqLen);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -917,6 +957,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 processed += reqLen;
 
                 std::thread([ctx, taskId, rawConfs]() {
+                    SystemUtils::SetThreadBackgroundPriority();
                     std::vector<ConflictItem> items;
                     std::shared_ptr<FileTransferTask> task;
                     {
@@ -1003,7 +1044,9 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             SocketHandle targetSock = ctx->fileSock;
                             if (targetSock != INVALID_SOCKET_HANDLE) {
                                 std::lock_guard<std::mutex> lock(ctx->fileSendLock);
-                                NetUtils::SendAll(targetSock, ansPkt.data(), ansPkt.size());
+                                if (targetSock == ctx->fileSock) {
+                                    NetUtils::SendAll(targetSock, ansPkt.data(), ansPkt.size());
+                                }
                             }
                         }
                     }
@@ -1029,10 +1072,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(dstTaskId);
                             std::vector<char> relayData(ptr, ptr + reqLen);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -1087,10 +1139,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(dstTaskId);
                             std::vector<char> relayData(ptr, ptr + 21 + chunkSize);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -1193,10 +1254,19 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                             unsigned int nNewId = htonl(dstTaskId);
                             std::vector<char> relayData(ptr, ptr + 9);
                             memcpy(relayData.data() + 1, &nNewId, 4);
-                            std::thread([fwd, relayData]() {
+                            bool fwdSuccess = false;
+                            {
                                 std::lock_guard<std::mutex> fLock(fwd->fileSendLock);
-                                NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
-                            }).detach();
+                                fwdSuccess = NetUtils::SendAll(fwd->fileSock, relayData.data(), relayData.size());
+                            }
+                            if (!fwdSuccess) {
+                                char cancelPkt[5];
+                                cancelPkt[0] = 19;
+                                unsigned int nT = htonl(taskId);
+                                memcpy(cancelPkt + 1, &nT, 4);
+                                std::lock_guard<std::mutex> lock(ctx->fileSendLock);
+                                NetUtils::SendAll(ctx->fileSock, cancelPkt, 5);
+                            }
                         }
                         isRelay = true;
                     }
@@ -1247,6 +1317,7 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                                 }
                             }
                         } else {
+                            currentFile->close();
                             std::lock_guard<std::mutex> lock(g_TaskMutex);
                             task->receivingFiles.erase(fileIdx);
                             task->currentFileRecvSize = 0;
@@ -1398,5 +1469,28 @@ void FileReceiverThreadFunc(std::shared_ptr<SlaveCtx> ctx) {
                 buffer.resize(buffer.size() * 2);
             }
         } else offset = 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_TaskMutex);
+        for (auto& kv : g_TransferTasks) {
+            auto task = kv.second;
+            if (task && !task->cancelled) {
+                task->cancelled = true;
+                for (auto& fkv : task->receivingFiles) {
+                    if (fkv.second) {
+                        fkv.second->flush();
+                        fkv.second->close();
+                    }
+                }
+                task->receivingFiles.clear();
+                if (g_Context->FileLockMgr) {
+                    for (const auto& pkv : task->tempFilePaths) {
+                        g_Context->FileLockMgr->UnlockPath(pkv.second);
+                    }
+                }
+                task->tempFilePaths.clear();
+            }
+        }
     }
 }

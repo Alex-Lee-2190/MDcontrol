@@ -62,7 +62,20 @@ FileTransferWidget::FileTransferWidget(uint32_t taskId, const QString& deviceNam
     
     QVBoxLayout* detailsLayout = new QVBoxLayout();
     
-    m_lblDevice = new QLabel(T("目标设备: %1").arg(m_deviceName));
+    bool isSender = true;
+    {
+        std::lock_guard<std::mutex> lock(g_TaskMutex);
+        if (g_TransferTasks.count(m_taskId)) {
+            isSender = g_TransferTasks[m_taskId]->isSender;
+        }
+    }
+
+    if (isSender) {
+        m_lblDevice = new QLabel(T("目标设备: %1").arg(m_deviceName));
+    } else {
+        m_lblDevice = new QLabel(T("来源设备: %1").arg(m_deviceName));
+    }
+    
     m_lblDevice->setStyleSheet("color: #666; font-weight: bold;");
     m_lblPath = new QLabel(T("保存至: %1").arg(m_targetPath));
     m_lblPath->setWordWrap(true); 

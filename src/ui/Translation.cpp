@@ -20,6 +20,7 @@ static std::map<QString, QString> dict_en_US = {
     {"已完成 0%", "0% Complete"},
     {"暂停/继续", "Pause/Resume"},
     {"目标设备: %1", "Target Device: %1"},
+    {"来源设备: %1", "Source Device: %1"},
     {"保存至: %1", "Save to: %1"},
     {"名称: ", "Name: "},
     {"名称: %1", "Name: %1"},

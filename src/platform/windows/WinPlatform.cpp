@@ -211,7 +211,12 @@ public:
                             size_t pos1 = reply.find(':', 10);
                             if (pos1 != std::string::npos) {
                                 std::string name = reply.substr(10, pos1 - 10);
-                                int tcpPort = std::stoi(reply.substr(pos1 + 1));
+                                int tcpPort = 0;
+                                try {
+                                    tcpPort = std::stoi(reply.substr(pos1 + 1));
+                                } catch (...) {
+                                    continue;
+                                }
                                 char ipStr[INET_ADDRSTRLEN];
                                 inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, sizeof(ipStr));
                                 MDC_LOG_INFO(LogTag::NET, "LanDiscovery discovered device IP: %s Name: %s Port: %d", ipStr, name.c_str(), tcpPort);

@@ -59,10 +59,26 @@ void NetworkReceiver() {
                         uint32_t taskId = (uint32_t)p1;
                         taskId |= 0x80000000;
                         
+                        std::string masterName = "Master";
+                        if (!g_MasterSysProps.empty()) {
+                            QString qProps = QString::fromStdString(g_MasterSysProps);
+                            int idx = qProps.indexOf(QString::fromUtf8("设备名称: "));
+                            if (idx != -1) {
+                                int end = qProps.indexOf('\n', idx);
+                                if (end != -1) masterName = qProps.mid(idx + 6, end - idx - 6).trimmed().toStdString();
+                            } else {
+                                idx = qProps.indexOf("Device Name: ");
+                                if (idx != -1) {
+                                    int end = qProps.indexOf('\n', idx);
+                                    if (end != -1) masterName = qProps.mid(idx + 13, end - idx - 13).trimmed().toStdString();
+                                }
+                            }
+                        }
+                        
                         auto task = std::make_shared<FileTransferTask>();
                         task->taskId = taskId;
                         task->isSender = false;
-                        task->deviceName = "Master";
+                        task->deviceName = masterName;
                         task->targetPath = targetPath;
                         {
                             std::lock_guard<std::mutex> lock(g_FileClipMutex);

@@ -8,7 +8,7 @@
 
 <h1 align="center">MDControl</h1>
 
-### Multi-Device Control
+## Multi-Device Control
 
 **MDControl** 是一个软件 KVM 工具，允许用户连接多台 Windows 设备，让键鼠在其之间**自由移动、自由传输剪贴板和文件**。
 

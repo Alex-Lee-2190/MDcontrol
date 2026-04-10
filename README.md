@@ -16,7 +16,7 @@
 
 ## Display
 
-[https://github.com/user-attachments/assets/5e4a6ad2-621a-48fa-a510-2fb692fb44df](https://github.com/user-attachments/assets/732db8b0-36fb-4461-9275-7d8da5963d09)
+https://github.com/user-attachments/assets/d3740535-0719-483c-a649-de9e920ace7d
 
 **Bilibili**: [https://www.bilibili.com/video/BV1J1wyz7Etv](https://www.bilibili.com/video/BV1fMQABNEJY/)
 

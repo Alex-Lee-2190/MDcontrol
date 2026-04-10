@@ -16,9 +16,9 @@
 
 ## Display
 
-https://github-production-user-asset-6210df.s3.amazonaws.com/218673146/565673527-fac31367-0ff6-4632-a68a-d20027a8698d.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20260318%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260318T161349Z&X-Amz-Expires=300&X-Amz-Signature=744978fe67047df54d77666b474af74c481411ddd79a99bf83c1732a44b96543&X-Amz-SignedHeaders=host
+[https://github.com/user-attachments/assets/5e4a6ad2-621a-48fa-a510-2fb692fb44df](https://github.com/user-attachments/assets/732db8b0-36fb-4461-9275-7d8da5963d09)
 
-**Full Demo**: [https://www.bilibili.com/video/BV1J1wyz7Etv](https://www.bilibili.com/video/BV1fMQABNEJY/)
+**Bilibili**: [https://www.bilibili.com/video/BV1J1wyz7Etv](https://www.bilibili.com/video/BV1fMQABNEJY/)
 
 ## Development Roadmap
 

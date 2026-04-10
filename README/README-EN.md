@@ -4,29 +4,22 @@
 
 <h1 align="center">MDControl</h1>
 
-### Multi-Device Control
+## Multi-Device Control
 
----
+**MDControl** is a software KVM tool that allows users to connect multiple Windows devices, enabling the keyboard and mouse to **move freely between them, as well as freely transfer clipboard content and files**.
 
-  > **MDControl** is a software KVM tool that allows users to control multiple devices using a single set of keyboard and mouse, with seamless cursor movement between devices, as well as clipboard and file sharing.
-  > **MDControl** supports both Bluetooth and TCP control, and can function normally even without a network connection.
+**MDControl** supports both Bluetooth and TCP control, allowing it to function even without a network connection. It also features UDP broadcasting and Bluetooth scanning, enabling quick discovery and connection to active devices.
 
-  ---
+## Display
 
-  ## Display
+[https://github.com/user-attachments/assets/5e4a6ad2-621a-48fa-a510-2fb692fb44df](https://github.com/user-attachments/assets/732db8b0-36fb-4461-9275-7d8da5963d09)
 
-https://github-production-user-asset-6210df.s3.amazonaws.com/218673146/565673527-fac31367-0ff6-4632-a68a-d20027a8698d.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20260318%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260318T161349Z&X-Amz-Expires=300&X-Amz-Signature=744978fe67047df54d77666b474af74c481411ddd79a99bf83c1732a44b96543&X-Amz-SignedHeaders=host
+**Bilibili**: [https://www.bilibili.com/video/BV1J1wyz7Etv](https://www.bilibili.com/video/BV1fMQABNEJY/)
 
-**Full Demo**: https://www.bilibili.com/video/BV1J1wyz7Etv
+## Development Roadmap
 
-  > *Note: File transfer for multiple controlled devices is not yet fully implemented in the Alpha version.*
+**Future**
 
-  ---
-
-  ## Development Roadmap
-
-  **Future**
-
-  - Cross-platform support (Windows / macOS / Linux)
-
-  - Mobile connectivity (Mobile / Computer)
+- Cross-platform support (Windows / macOS / Linux)
+  
+- Mobile connectivity (Mobile / Computer)
